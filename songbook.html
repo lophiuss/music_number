@@ -204,6 +204,31 @@
     <textarea id="secLyrics" rows="2" placeholder="例如：一 闪 一 闪 亮 晶 晶"></textarea>
   </div>
 
+  <!-- 拍照识谱 -->
+  <div class="card">
+    <h2>📷 拍照识谱（用你电脑上的 Ollama，实验功能）</h2>
+    <div class="help" style="margin-bottom:8px">选一张歌谱的照片，让你电脑里的 AI 模型试着读出来，结果直接填进上面的“写歌谱”。<b>小模型不一定看得懂简谱（下划线、点很容易看错），所以一定要播放听一遍核对。</b>可以勾好几个模型，同一张图让它们都读一遍，看谁读得最准。</div>
+    <div class="row">
+      <span class="label">地址</span><input type="text" id="olHost" value="http://localhost:11434">
+      <button id="olConnect">🔌 连接，看看我有哪些模型</button>
+    </div>
+    <div id="olModels" class="help" style="margin-bottom:8px"></div>
+    <div class="row">
+      <span class="label">照片</span><input type="file" id="olFile" accept="image/*">
+      <span class="label" style="margin-left:8px">切成</span>
+      <select id="olStrips"><option value="1">整张一起读</option><option value="2">2 条</option><option value="3" selected>3 条</option><option value="4">4 条</option><option value="5">5 条</option><option value="6">6 条</option></select>
+      <span class="help">（一行一行读比整页准；最好先把照片裁成只剩谱子）</span>
+    </div>
+    <canvas id="olPrev" style="max-width:100%;border:1px solid var(--line);border-radius:8px;display:none"></canvas>
+    <details style="margin:8px 0"><summary class="help" style="cursor:pointer">给 AI 的提示词（想改可以改）</summary><textarea id="olPrompt" rows="12"></textarea></details>
+    <div class="row">
+      <button id="olRun" class="primary" style="font-size:16px;padding:8px 18px">🔍 开始识别</button>
+      <button id="olStop" style="display:none">■ 中止</button>
+      <span id="olMsg" class="help"></span>
+    </div>
+    <div id="olOut"></div>
+  </div>
+
   <!-- 我的歌曲 -->
   <div class="card">
     <h2>💾 我的歌曲（保存在这台电脑的浏览器里）</h2>
@@ -858,6 +883,104 @@ $("bookBtn").onclick = () => {
   if (typeof BOOK_SONGS === "undefined") { say("找不到 book-songs.js，请和这个页面放在同一个文件夹里。"); return; }
   const r = merge(BOOK_SONGS);
   if (r) say(`已载入：新增 ${r.added} 首；已经有的 ${r.same} 首跳过；重名但内容不同的 ${r.renamed} 首另存为“（导入）”。在下面“我的歌曲”里点“打开”。`, true);
+};
+
+// ---------- 拍照识谱（本机 Ollama）----------
+$("olPrompt").value = `这是一张简谱（数字乐谱）的图片。请只输出谱子，用下面规定的写法，不要解释。
+规则：
+1. 数字 1-7 是音，0 是休止符，用空格隔开；小节线写成 |
+2. 数字上面有点＝高音：在数字后面加星，例如 1*；数字下面有点＝低音：把点写在数字前面，例如 .5
+3. 数字下面有一条横线＝半拍：在数字后面加下划线，例如 5_；两条横线＝四分之一拍：5__。几个音共用一条横线时，用括号括起来，例如 (5 6) 或 ((5 6))
+4. 数字后面的短横线 - 表示延长一拍，照样写 -，例如 1 - - -
+5. 数字右边的点是附点：写成 5.（点后面空一格）
+6. 数字前面的 ♯ 写成 #，例如 #4
+7. 数字上面的字母（F、C、Gm、B♭、C7）是和弦：写在它下面第一个音的前面，用花括号，例如 {F}
+8. 谱子下面的汉字是歌词，一个字对一个音，没有字的音写 _
+输出格式（两行）：
+谱：这里写数字谱
+词：这里写歌词，字与字之间空一格`;
+let olAbort = null, olImg = null;
+const olMsg = t => $("olMsg").textContent = t;
+function olSplit(t) {
+  t = t.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/```[a-z]*/g, "").trim();
+  const m = /(?:^|\n)\s*(?:词|歌词)\s*[:：]/.exec(t); let sc = t, ly = "";
+  if (m) { sc = t.slice(0, m.index); ly = t.slice(m.index).replace(/^\s*(?:词|歌词)\s*[:：]/, ""); }
+  return { sc: sc.replace(/^\s*(?:谱|曲谱|旋律)\s*[:：]/, "").trim(), ly: ly.trim() };
+}
+function olScore(text) {
+  const items = parseSection(text), bad = items.filter(i => i.t === "bad").length, meter = song.meter || 4;
+  const bars = []; let cur = 0, any = false;
+  items.forEach(it => { if (it.t === "bar") { if (any) bars.push(cur); cur = 0; any = false; } else if (it.t === "note" || it.t === "rest") { cur += it.beats; any = true; } });
+  if (any) bars.push(cur);
+  const good = bars.filter(b => Math.abs(b - meter) < 0.01).length;
+  return { bad, bars: bars.length, good, notes: items.filter(i => i.t === "note").length };
+}
+$("olConnect").onclick = async () => {
+  const host = $("olHost").value.trim().replace(/\/$/, ""), box = $("olModels"); box.textContent = "连接中…";
+  try {
+    const r = await fetch(host + "/api/tags"); if (!r.ok) throw new Error("HTTP " + r.status);
+    const names = ((await r.json()).models || []).map(m => m.name);
+    if (!names.length) { box.textContent = "连上了，但是还没有下载任何模型。先在电脑上运行：ollama pull qwen2.5vl:7b"; return; }
+    const caps = await Promise.all(names.map(async n => { try { const x = await fetch(host + "/api/show", { method: "POST", body: JSON.stringify({ model: n }) }); const j = await x.json(); return (j.capabilities || []).includes("vision"); } catch (e) { return /vl|vision|llava|minicpm-v|gemma[34]|moondream|pixtral|llama4|internvl|molmo|smolvlm/i.test(n); } }));
+    box.innerHTML = "";
+    names.forEach((n, i) => {
+      const l = document.createElement("label"); l.style.cssText = "display:block;margin:3px 0;color:#1f2937";
+      const c = document.createElement("input"); c.type = "checkbox"; c.value = n; c.checked = caps[i] && !/embed/i.test(n);
+      l.append(c, " ", document.createTextNode(n + (caps[i] ? "　👁 能看图" : "　（不能看图）"))); if (!caps[i]) c.disabled = true; box.appendChild(l);
+    });
+    if (!caps.some(Boolean)) box.append("你的模型里没有能看图的。可以在电脑上运行：ollama pull qwen2.5vl:7b （或 minicpm-v、gemma3）");
+  } catch (e) {
+    box.innerHTML = "连不上 Ollama。请检查：① Ollama 有没有在运行；② 地址对不对；③ 如果是用网址（http://…）打开本页的，需要让 Ollama 允许这个来源——Mac：终端输入 <code>launchctl setenv OLLAMA_ORIGINS \"*\"</code> 然后退出并重开 Ollama；Windows：在“编辑系统环境变量”里新建用户变量 <code>OLLAMA_ORIGINS</code>，值填 <code>*</code>，然后重开 Ollama。直接双击打开本页文件通常不用设。";
+  }
+};
+function olPrepareImage(img, strips) {      // 缩小并切成几条，返回 base64 数组
+  const W = Math.min(1800, img.naturalWidth), scale = W / img.naturalWidth, H = Math.round(img.naturalHeight * scale), out = [];
+  for (let i = 0; i < strips; i++) {
+    const y0 = Math.floor(H * i / strips), y1 = Math.floor(H * (i + 1) / strips), cv = document.createElement("canvas");
+    cv.width = W; cv.height = y1 - y0; cv.getContext("2d").drawImage(img, 0, y0 / scale, img.naturalWidth, (y1 - y0) / scale, 0, 0, W, y1 - y0);
+    out.push(cv.toDataURL("image/jpeg", 0.9).split(",")[1]);
+  }
+  return out;
+}
+$("olFile").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const img = new Image(); img.onload = () => {
+    olImg = img; const cv = $("olPrev"), w = Math.min(700, img.naturalWidth); cv.width = w; cv.height = Math.round(img.naturalHeight * w / img.naturalWidth);
+    cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height); cv.style.display = "block";
+  }; img.src = URL.createObjectURL(f);
+};
+$("olStop").onclick = () => { if (olAbort) olAbort.abort(); };
+$("olRun").onclick = async () => {
+  const host = $("olHost").value.trim().replace(/\/$/, ""), models = [...$("olModels").querySelectorAll("input:checked")].map(x => x.value);
+  if (!olImg) { olMsg("先选一张歌谱的照片。"); return; }
+  if (!models.length) { olMsg("先点“连接”，再勾选至少一个能看图的模型。"); return; }
+  const strips = parseInt($("olStrips").value), imgs = olPrepareImage(olImg, strips), prompt = $("olPrompt").value;
+  olAbort = new AbortController(); $("olRun").style.display = "none"; $("olStop").style.display = ""; $("olOut").innerHTML = "";
+  try {
+    for (const model of models) {
+      const card = document.createElement("div"); card.className = "song"; card.style.display = "block"; $("olOut").appendChild(card);
+      card.append(mk("div", "nm", "🤖 " + model)); const status = mk("div", "help", "识别中…"); card.appendChild(status);
+      let sc = [], ly = [], t0 = Date.now();
+      try {
+        for (let i = 0; i < imgs.length; i++) {
+          olMsg(`${model}：第 ${i + 1}/${imgs.length} 条…（本机模型可能要等一两分钟）`);
+          const r = await fetch(host + "/api/chat", { method: "POST", signal: olAbort.signal, body: JSON.stringify({ model, stream: false, options: { temperature: 0.1 },
+            messages: [{ role: "user", content: prompt, images: [imgs[i]] }] }) });
+          if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 120));
+          const o = olSplit(((await r.json()).message || {}).content || ""); if (o.sc) sc.push(o.sc); if (o.ly) ly.push(o.ly);
+        }
+      } catch (e) { status.textContent = e.name === "AbortError" ? "已中止。" : "出错了：" + e.message; if (e.name === "AbortError") throw e; continue; }
+      const ta = mk("textarea"); ta.rows = 4; ta.value = sc.join(" | "); const tl = mk("textarea"); tl.rows = 2; tl.value = ly.join(" ");
+      const stat = mk("div", "help"), upd = () => { const q = olScore(ta.value); stat.textContent = `读出 ${q.notes} 个音，${q.bars} 个小节里有 ${q.good} 个拍数正好是 ${song.meter || 4} 拍，${q.bad} 处看不懂。（小节拍数对得越多，通常越准）`; };
+      ta.oninput = upd; upd(); status.textContent = `用时 ${Math.round((Date.now() - t0) / 1000)} 秒。检查下面的内容，需要的话直接改：`;
+      const row = mk("div", "row"), b1 = mk("button", "", "放进当前这一段"), b2 = mk("button", "", "放进一个新段落");
+      b1.onclick = () => { const sec = secOf(activeId); sec.text = (sec.text.trim() + " " + ta.value).trim(); sec.lyrics = (sec.lyrics.trim() + " " + tl.value).trim(); persist(); loadEditor(); say(`已放进“${sec.name}”，点“只播”听听看。`, true); };
+      b2.onclick = () => { const id = uid(); song.sections.push({ id, name: "识谱·" + model.split(":")[0], text: ta.value.trim(), lyrics: tl.value.trim() }); song.order.push({ sec: id, rep: 1, on: false }); activeId = id; persist(); renderAll(); say("已放进新段落（先不加入播放顺序，勾上才会播）。", true); };
+      row.append(b1, b2); card.append(mk("div", "help", "谱："), ta, mk("div", "help", "歌词："), tl, stat, row);
+    }
+    olMsg("全部识别完了。");
+  } catch (e) { olMsg("已中止。"); }
+  $("olRun").style.display = ""; $("olStop").style.display = "none"; olAbort = null;
 };
 
 // ---------- 新歌 / 示例 / 启动 ----------
