@@ -216,7 +216,7 @@
     <div class="row">
       <span class="label">照片</span><input type="file" id="olFile" accept="image/*">
       <span class="label" style="margin-left:8px">切成</span>
-      <select id="olStrips"><option value="1">整张一起读</option><option value="2">2 条</option><option value="3" selected>3 条</option><option value="4">4 条</option><option value="5">5 条</option><option value="6">6 条</option></select>
+      <select id="olStrips"><option value="auto" selected>自动按谱行切（推荐）</option><option value="1">整张一起读</option><option value="2">2 条</option><option value="3">3 条</option><option value="4">4 条</option><option value="5">5 条</option><option value="6">6 条</option></select>
       <span class="help">（一行一行读比整页准；最好先把照片裁成只剩谱子）</span>
     </div>
     <div class="row">
@@ -226,6 +226,7 @@
       <label><input type="checkbox" id="olNoThink" checked> 关闭模型的“思考”（更快）</label>
     </div>
     <div class="help" id="olSizeInfo" style="margin:-4px 0 8px"></div>
+    <div id="olStripsBox" class="help" style="margin-bottom:6px"></div>
     <canvas id="olPrev" style="max-width:100%;border:1px solid var(--line);border-radius:8px;display:none"></canvas>
     <details style="margin:8px 0"><summary class="help" style="cursor:pointer">给 AI 的提示词（想改可以改）</summary><textarea id="olPrompt" rows="12"></textarea></details>
     <div class="row">
@@ -374,7 +375,7 @@ function parseSection(text) {
     const semi = SEMI[d] + (sharp ? 1 : 0) + (high ? 12 : 0) - (low ? 12 : 0);
     if (tieFrom && tieFrom.semi === semi) {       // 连音线：合成一个长音
       tieFrom.beats += beats; cur = tieFrom; tieFrom = null;
-      items.push({ t: "ext", owner: cur, u, tied: true, b: beats, label: (sharp ? "♯" : "") + d, dot });
+      items.push({ t: "ext", owner: cur, u, tied: true, b: beats, name, label: (sharp ? "♯" : "") + d, dot });
     } else {
       tieFrom = null;
       cur = { t: "note", name, digit: d, low, high, sharp, semi, u, dot, beats, base: beats }; items.push(cur);
@@ -923,6 +924,40 @@ function olScore(text) {
   const good = bars.filter(b => Math.abs(b - meter) < 0.01).length;
   return { bad, bars: bars.length, good, notes: items.filter(i => i.t === "note").length };
 }
+// 把解析出来的东西写回文字（用下划线写法，不用括号）
+function itemsToText(items) {
+  const us = n => "_".repeat(n);
+  return items.map(it => it.t === "bar" ? "|" : it.t === "chord" ? "{" + it.name + "}" : it.t === "tie" ? "~" : it.t === "bad" ? it.tok
+    : it.t === "ext" ? (it.tied ? it.name + us(it.u) + (it.dot ? "." : "") : "-" + us(it.u))
+    : it.t === "rest" ? "0" + us(it.u) + (it.dot ? "." : "") : it.name + us(it.u) + (it.dot ? "." : "")).join(" ");
+}
+// 模型常常读不出下划线（半拍）。已知每小节的拍数，就能反推哪几个音该是半拍/四分之一拍（这只是猜的，要听一遍核对）
+function fixBeats(text, meter) {
+  const items = parseSection(text), segs = [[]];
+  items.forEach(it => { if (it.t === "bar") segs.push([]); else segs[segs.length - 1].push(it); });
+  const bt = (u, dot) => (1 / Math.pow(2, u)) * (dot ? 1.5 : 1);
+  let fixed = 0, bad = 0, total = 0;
+  segs.forEach(seg => {
+    const nr = seg.filter(x => x.t === "note" || x.t === "rest"); if (!nr.length) return; total++;
+    const sum = nr.reduce((a, x) => a + x.beats, 0); if (Math.abs(sum - meter) < 0.01) return;
+    if (seg.some(x => x.t === "bad" || x.t === "tie" || (x.t === "ext" && x.tied))) { bad++; return; }
+    const flex = nr.filter(x => x.u === 0 && !seg.some(e => e.t === "ext" && e.owner === x));
+    if (!flex.length || flex.length > 9) { bad++; return; }
+    const fixedSum = sum - flex.reduce((a, x) => a + x.beats, 0), need = meter - fixedSum;
+    let best = null, bc = Infinity; const n = flex.length, cur = new Array(n).fill(0);
+    (function rec(i, acc) {
+      if (i === n) {
+        if (Math.abs(acc - need) > 0.001) return;
+        let c = 0; for (let k = 0; k < n; k++) { if (k && cur[k] !== cur[k - 1]) c += 1; if (cur[k] === 2) c += 0.2; if (flex[k].dot && cur[k] === 1 && cur[k + 1] === 2) c -= 0.5; }
+        if (c < bc) { bc = c; best = cur.slice(); } return;
+      }
+      for (let u = 0; u <= 2; u++) { const a = acc + bt(u, flex[i].dot); if (a > need + 0.001) continue; cur[i] = u; rec(i + 1, a); }
+    })(0, 0);
+    if (!best) { bad++; return; }
+    flex.forEach((x, k) => { x.u = best[k]; x.beats = bt(best[k], x.dot); }); fixed++;
+  });
+  return { text: itemsToText(items), fixed, bad, total };
+}
 $("olConnect").onclick = async () => {
   const host = $("olHost").value.trim().replace(/\/$/, ""), box = $("olModels"); box.textContent = "连接中…";
   try {
@@ -942,19 +977,22 @@ $("olConnect").onclick = async () => {
   }
 };
 // 自动大小：先量一下谱子里数字大概多高，再缩到“刚好够清楚”（太小模型会瞎猜，太大又慢）
-function olMeasureDigit(img) {
+function olInk(img) {      // 每一行有多少“墨水”点（和周围比明显更黑的点，不怕阴影）
   const W = Math.min(1600, img.naturalWidth), k = W / img.naturalWidth, H = Math.round(img.naturalHeight * k);
   const cv = document.createElement("canvas"); cv.width = W; cv.height = H; const g = cv.getContext("2d", { willReadFrequently: true }); g.drawImage(img, 0, 0, W, H);
   const px = g.getImageData(0, 0, W, H).data, gray = new Float32Array(W * H), ii = new Float64Array((W + 1) * (H + 1));
   for (let i = 0; i < W * H; i++) gray[i] = 0.3 * px[i * 4] + 0.59 * px[i * 4 + 1] + 0.11 * px[i * 4 + 2];
   for (let y = 0; y < H; y++) { let row = 0; for (let x = 0; x < W; x++) { row += gray[y * W + x]; ii[(y + 1) * (W + 1) + x + 1] = ii[y * (W + 1) + x + 1] + row; } }
-  const R = 12, prof = new Int32Array(H);      // 和周围比明显更黑的点 = 墨水（不怕阴影）
+  const R = 12, prof = new Int32Array(H);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const x0 = Math.max(0, x - R), x1 = Math.min(W, x + R + 1), y0 = Math.max(0, y - R), y1 = Math.min(H, y + R + 1);
     const m = (ii[y1 * (W + 1) + x1] - ii[y0 * (W + 1) + x1] - ii[y1 * (W + 1) + x0] + ii[y0 * (W + 1) + x0]) / ((x1 - x0) * (y1 - y0));
     if (gray[y * W + x] < m - 28) prof[y]++;
   }
-  const thr = Math.max(6, 0.02 * W), bands = []; let start = -1, gap = 0;
+  return { prof, W, H, k };
+}
+function olMeasureDigit(img, ink) {
+  const { prof, W, H, k } = ink || olInk(img), thr = Math.max(6, 0.02 * W), bands = []; let start = -1, gap = 0;
   for (let y = 0; y <= H; y++) {
     const on = y < H && prof[y] > thr;
     if (on) { if (start < 0) start = y; gap = 0; } else if (start >= 0) { gap++; if (gap > 3 || y === H) { bands.push(y - gap - start + 1); start = -1; gap = 0; } }
@@ -963,33 +1001,84 @@ function olMeasureDigit(img) {
   if (hs.length < 3) return null;
   return (hs[Math.floor(hs.length / 2)] * 0.8) / k;     // 数字高度（按原图像素算）
 }
+// 切成 n 条：切口尽量落在两行之间最空白的地方，不会把一行谱子切成两半
+function olCutPoints(img, n) {
+  const ink = olInk(img), { prof, H, k } = ink, cuts = [0];
+  const sm = new Float32Array(H); for (let y = 0; y < H; y++) { let a = 0, c = 0; for (let d = -5; d <= 5; d++) { const yy = y + d; if (yy >= 0 && yy < H) { a += prof[yy]; c++; } } sm[y] = a / c; }
+  for (let i = 1; i < n; i++) {
+    const nom = H * i / n, win = 0.35 * H / n; let best = Math.round(nom), bv = Infinity;
+    for (let y = Math.max(cuts[cuts.length - 1] + 20, Math.floor(nom - win)); y <= Math.min(H - 20, Math.ceil(nom + win)); y++) {
+      const v = sm[y] + Math.abs(y - nom) * 0.02; if (v < bv) { bv = v; best = y; }
+    }
+    cuts.push(best);
+  }
+  cuts.push(H); return { cuts: cuts.map(y => Math.round(y / k)), ink };
+}
+// 按谱行自动找出每一行（谱+和弦+歌词算一行）：行与行之间的空白比行内的空白大
+function olSystems(img, ink) {
+  ink = ink || olInk(img); const { prof, W, H, k } = ink, thr = Math.max(6, 0.02 * W), d = olMeasureDigit(img, ink) || 28, dh = d * k;
+  const bands = []; let st = -1, gap = 0;
+  for (let y = 0; y <= H; y++) { const on = y < H && prof[y] > thr; if (on) { if (st < 0) st = y; gap = 0; } else if (st >= 0) { gap++; if (gap > 3 || y === H) { bands.push([st, y - gap]); st = -1; gap = 0; } } }
+  const G = Math.max(14, 0.62 * dh), groups = []; let cur = null;
+  bands.forEach(b => { if (cur && b[0] - cur[1] < G) cur[1] = b[1]; else { cur = [b[0], b[1]]; groups.push(cur); } });
+  const pad = Math.round(0.5 * dh);
+  return { d, segs: groups.filter(g => g[1] - g[0] >= 2 * dh).map(g => ({ y0: Math.max(0, Math.round((g[0] - pad) / k)), y1: Math.min(img.naturalHeight, Math.round((g[1] + pad) / k)), ratio: (g[1] - g[0]) / dh })) };
+}
 function olChooseWidth(img) {
   const mode = $("olSize").value, nat = img.naturalWidth, info = $("olSizeInfo");
   if (mode !== "auto") { info.textContent = ""; return Math.min(parseInt(mode), nat); }
-  const minD = Math.max(12, parseInt($("olMinDigit").value) || 22), d = olMeasureDigit(img);
+  const minD = Math.max(12, parseInt($("olMinDigit").value) || 22), d = olMeasureDigit(img, olInkCache);
   if (!d || d < 6 || d > 300) { info.textContent = "没能量出数字大小，先用中等大小（宽 1400）。"; return Math.min(1400, nat); }
   let w = Math.round((nat * minD) / d / 50) * 50; w = Math.max(900, Math.min(1800, nat, w));
   const real = d * w / nat;
   info.textContent = `自动大小：原图里数字约 ${Math.round(d)} 像素高 → 缩到宽 ${w}，数字约 ${Math.round(real)} 像素高` + (real < minD - 1 ? "（照片本身偏小或离得远，数字有点小，可能读不准；建议拍近一点或裁掉多余的边）" : "，够看清了。");
   return w;
 }
-function olPrepareImage(img, strips, maxW) {      // 缩小并切成几条，返回 base64 数组
-  const W = Math.min(maxW, img.naturalWidth), scale = W / img.naturalWidth, H = Math.round(img.naturalHeight * scale), out = [];
-  for (let i = 0; i < strips; i++) {
-    const y0 = Math.floor(H * i / strips), y1 = Math.floor(H * (i + 1) / strips), cv = document.createElement("canvas");
-    cv.width = W; cv.height = y1 - y0; cv.getContext("2d").drawImage(img, 0, y0 / scale, img.naturalWidth, (y1 - y0) / scale, 0, 0, W, y1 - y0);
+function olSlices(img, plan, maxW) {      // 按计划把图缩小、切开，返回 base64 数组
+  const W = Math.min(maxW, img.naturalWidth), scale = W / img.naturalWidth, out = [];
+  plan.filter(x => x.on).forEach(x => {
+    const h = Math.max(8, Math.round((x.y1 - x.y0) * scale)), cv = document.createElement("canvas");
+    cv.width = W; cv.height = h; cv.getContext("2d").drawImage(img, 0, x.y0, img.naturalWidth, x.y1 - x.y0, 0, 0, W, h);
     out.push(cv.toDataURL("image/jpeg", 0.9).split(",")[1]);
-  }
+  });
   return out;
 }
+let olPlan = [];
+function olDrawPlan() {
+  const cv = $("olPrev"), g = cv.getContext("2d"), k = cv.width / olImg.naturalWidth;
+  g.drawImage(olImg, 0, 0, cv.width, cv.height); g.lineWidth = 2; g.font = "bold 16px sans-serif";
+  olPlan.forEach((x, i) => { g.strokeStyle = x.on ? "#dc2626" : "#9ca3af"; g.fillStyle = g.strokeStyle; g.setLineDash(x.on ? [] : [6, 4]);
+    g.strokeRect(2, x.y0 * k + 1, cv.width - 4, (x.y1 - x.y0) * k - 2); g.fillText(String(i + 1), 8, x.y0 * k + 18); });
+}
+function olBuildPlan() {
+  if (!olImg) return;
+  const mode = $("olStrips").value; let segs = null, note = "";
+  if (mode === "auto") {
+    const o = olSystems(olImg, olInkCache);
+    if (o.segs.length >= 2 && Math.max(...o.segs.map(x => x.ratio)) <= 9) {
+      segs = o.segs.map(x => ({ y0: x.y0, y1: x.y1, on: x.ratio >= 3.6 }));
+      note = `自动找到 ${segs.filter(x => x.on).length} 行谱。虚线灰框（标题、页眉之类）已经去掉，不对的话在下面勾一勾。`;
+    } else note = "这张图自动分不清哪是哪一行（行挨得太近），先均匀切成 3 条；可以改上面“切成”的条数，红框要正好框住一行谱。";
+  }
+  if (!segs) {
+    const n = mode === "auto" ? 3 : parseInt(mode), c = n > 1 ? olCutPoints(olImg, n).cuts : [0, olImg.naturalHeight]; segs = [];
+    for (let i = 0; i < n; i++) segs.push({ y0: c[i], y1: c[i + 1], on: true });
+  }
+  olPlan = segs; const box = $("olStripsBox"); box.textContent = note + " "; 
+  segs.forEach((x, i) => { const l = document.createElement("label"); l.style.cssText = "margin-right:10px;white-space:nowrap";
+    const c = document.createElement("input"); c.type = "checkbox"; c.checked = x.on; c.onchange = () => { x.on = c.checked; olDrawPlan(); };
+    l.append(c, ` 第${i + 1}条`); box.appendChild(l); });
+  olDrawPlan();
+}
+$("olStrips").onchange = olBuildPlan;
 $("olFile").onchange = e => {
   const f = e.target.files[0]; if (!f) return;
   const img = new Image(); img.onload = () => {
-    olImg = img; const cv = $("olPrev"), w = Math.min(700, img.naturalWidth); cv.width = w; cv.height = Math.round(img.naturalHeight * w / img.naturalWidth);
-    cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height); cv.style.display = "block";
+    olImg = img; olInkCache = olInk(img); const cv = $("olPrev"), w = Math.min(700, img.naturalWidth); cv.width = w; cv.height = Math.round(img.naturalHeight * w / img.naturalWidth);
+    cv.style.display = "block"; olBuildPlan();
   }; img.src = URL.createObjectURL(f);
 };
-let olCtl = null, olStopAll = false;
+let olCtl = null, olStopAll = false, olInkCache = null;
 $("olStop").onclick = () => { olStopAll = true; if (olCtl) olCtl.abort(); };
 $("olSkip").onclick = () => { if (olCtl) olCtl.abort(); };
 // 一边收一边显示（stream），这样能看到它有没有在干活
@@ -1019,14 +1108,15 @@ $("olRun").onclick = async () => {
   const host = $("olHost").value.trim().replace(/\/$/, ""), models = [...$("olModels").querySelectorAll("input:checked")].map(x => x.value);
   if (!olImg) { olMsg("先选一张歌谱的照片。"); return; }
   if (!models.length) { olMsg("先点“连接”，再勾选至少一个能看图的模型。"); return; }
-  const strips = parseInt($("olStrips").value), imgs = olPrepareImage(olImg, strips, olChooseWidth(olImg)), prompt = $("olPrompt").value;
+  const imgs = olSlices(olImg, olPlan, olChooseWidth(olImg)), prompt = $("olPrompt").value;
+  if (!imgs.length) { olMsg("没有选中任何一条。在照片上面勾选要读的几条。"); return; }
   olStopAll = false; $("olRun").style.display = "none"; $("olStop").style.display = ""; $("olSkip").style.display = ""; $("olOut").innerHTML = "";
   for (const model of models) {
     if (olStopAll) break;
     const card = document.createElement("div"); card.className = "song"; card.style.display = "block"; $("olOut").appendChild(card);
     card.append(mk("div", "nm", "🤖 " + model)); const status = mk("div", "help", "准备中…"), live = mk("pre"); live.style.cssText = "white-space:pre-wrap;font-size:12px;color:#6b7280;max-height:70px;overflow:auto;margin:4px 0";
     card.append(status, live);
-    let sc = [], ly = [], t0 = Date.now(), skipped = false, failed = null;
+    let sc = [], ly = [], dropped = [], t0 = Date.now(), skipped = false, failed = null;
     for (let i = 0; i < imgs.length && !skipped && !failed; i++) {
       olCtl = new AbortController(); let len = 0, th = 0, t1 = Date.now();
       const label = `第 ${i + 1}/${imgs.length} 条`, tick = setInterval(() => {
@@ -1035,20 +1125,24 @@ $("olRun").onclick = async () => {
       olMsg(`${model}：${label}…　太慢的话点“跳过这个模型”`);
       try {
         const text = await olChat(host, model, prompt, imgs[i], (c, t) => { len = c.length; th = t; live.textContent = c.slice(-300); });
-        const o = olSplit(text); if (o.sc) sc.push(o.sc); if (o.ly) ly.push(o.ly);
+        const o = olSplit(text), q = olScore(o.sc);
+        const real = /(?:^|\n)\s*(?:谱|曲谱|旋律)\s*[:：]/.test(text.replace(/<think>[\s\S]*?<\/think>/g, ""));
+        if (o.sc && (real || (q.notes >= 2 && q.bad <= q.notes * 0.3))) sc.push(o.sc); else dropped.push(`${label}：模型没读出谱子（它说：${text.replace(/\s+/g, " ").slice(0, 40)}…）`);
+        if (o.ly) ly.push(o.ly);
       } catch (e) { if (e.name === "AbortError") { if (olStopAll) { failed = "已中止"; } else skipped = true; } else failed = "出错了：" + e.message; }
       clearInterval(tick);
     }
-    live.remove();
+    live.remove(); if (dropped.length) card.appendChild(mk("div", "help", "⚠️ 有的条没读出谱子，已丢掉：" + dropped.join("；")));
     if (failed || skipped) { status.textContent = (failed || "已跳过") + `（用了 ${Math.round((Date.now() - t0) / 1000)} 秒）` + (sc.length ? "。已读出的部分在下面：" : ""); if (!sc.length) continue; }
     else status.textContent = `用时 ${Math.round((Date.now() - t0) / 1000)} 秒。检查下面的内容，需要的话直接改：`;
     const ta = mk("textarea"); ta.rows = 4; ta.value = sc.join(" | "); const tl = mk("textarea"); tl.rows = 2; tl.value = ly.join(" ");
     const stat = mk("div", "help"), upd = () => { const q = olScore(ta.value); stat.textContent = `读出 ${q.notes} 个音，${q.bars} 个小节里有 ${q.good} 个拍数正好是 ${song.meter || 4} 拍，${q.bad} 处看不懂。（小节拍数对得越多，通常越准）`; };
     ta.oninput = upd; upd();
-    const row = mk("div", "row"), b1 = mk("button", "", "放进当前这一段"), b2 = mk("button", "", "放进一个新段落");
+    const row = mk("div", "row"), b0 = mk("button", "", "🔧 按拍号猜节奏（补下划线）"), b1 = mk("button", "", "放进当前这一段"), b2 = mk("button", "", "放进一个新段落");
+    b0.onclick = () => { const r = fixBeats(ta.value, song.meter || 4); ta.value = r.text; upd(); stat.textContent += `　【已按 ${song.meter || 4} 拍补了 ${r.fixed} 个小节，${r.bad} 个小节没法补（可能小节线读错了）。这是猜的，要听一遍核对。】`; };
     b1.onclick = () => { const sec = secOf(activeId); sec.text = (sec.text.trim() + " " + ta.value).trim(); sec.lyrics = (sec.lyrics.trim() + " " + tl.value).trim(); persist(); loadEditor(); say(`已放进“${sec.name}”，点“只播”听听看。`, true); };
     b2.onclick = () => { const id = uid(); song.sections.push({ id, name: "识谱·" + model.split(":")[0], text: ta.value.trim(), lyrics: tl.value.trim() }); song.order.push({ sec: id, rep: 1, on: false }); activeId = id; persist(); renderAll(); say("已放进新段落（先不加入播放顺序，勾上才会播）。", true); };
-    row.append(b1, b2); card.append(mk("div", "help", "谱："), ta, mk("div", "help", "歌词："), tl, stat, row);
+    row.append(b0, b1, b2); card.append(mk("div", "help", "谱："), ta, mk("div", "help", "歌词："), tl, stat, row);
   }
   olMsg(olStopAll ? "已中止。" : "全部识别完了。");
   $("olRun").style.display = ""; $("olStop").style.display = "none"; $("olSkip").style.display = "none"; olCtl = null;
