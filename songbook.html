@@ -57,7 +57,10 @@
   .wk { position: absolute; top: 0; height: 100%; border: 1px solid #9ca3af; background: #fff; border-radius: 0 0 5px 5px; font-size: 10px; color: var(--muted); display: flex; align-items: flex-end; justify-content: center; padding-bottom: 3px; }
   .wk.lo { background: #eff6ff; } .wk.hi { background: #fff7ed; }
   .bk { position: absolute; top: 0; height: 56%; background: #1f2937; border-radius: 0 0 4px 4px; z-index: 2; }
+  .wk.ck { background: #bfdbfe; } .bk.ck { background: #2563eb; }
   .wk.on, .bk.on { background: #f59e0b; color: #000; }
+  .it .ch { font-style: normal; height: 15px; line-height: 15px; font-size: 12px; font-weight: 700; color: #2563eb; white-space: nowrap; }
+  .it.on .ch { color: #fff; }
   .pianoNote { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 4px; }
 
   /* 播放顺序 / 段落 */
@@ -101,6 +104,11 @@
       <span class="help">（太高唱不上去或太低时用，整首一起升降）</span>
     </div>
     <div class="row">
+      <span class="label">拍号</span>
+      <select id="meterSel"><option value="4">4/4（每小节 4 拍）</option><option value="3">3/4（每小节 3 拍）</option><option value="2">2/4（每小节 2 拍）</option></select>
+      <span class="help">（谱子左上角 F major 旁边写的 4/4、2/4；影响伴奏的节奏）</span>
+    </div>
+    <div class="row">
       <button id="newBtn">📄 新歌</button>
       <button id="demoBtn">🌟 载入示例（小星星）</button>
     </div>
@@ -113,10 +121,21 @@
     <div id="score"></div>
     <div class="piano" id="piano"></div>
     <div class="pianoNote"><span>← 低音</span><span id="nowKey" style="font-weight:600;color:#1f2937"></span><span>高音 →</span></div>
+    <div id="nowChord" style="text-align:center;font-size:13px;color:#2563eb;font-weight:600;min-height:20px;margin-top:2px"></div>
     <div class="row" style="margin-top:12px">
       <button id="playBtn" class="primary">▶ 按顺序播放</button>
       <button id="stopBtn" class="stop" style="display:none">■ 停止</button>
       <span class="label" style="margin-left:8px">音量</span><input type="range" id="vol" min="0" max="1" step="0.05" value="0.6">
+    </div>
+    <div class="row">
+      <span class="label">旋律音色</span><select id="instMel"></select>
+      <span class="label" style="margin-left:8px">伴奏音色</span><select id="instAcc"></select>
+    </div>
+    <div class="help" style="margin:-4px 0 10px">带 🌐 的是真实乐器录音：要联网，第一次下载 1~3 MB，之后浏览器会记住；连不上会自动改用内置的合成音色。内置的不用联网，是电脑合成的，像但不是真的录音。</div>
+    <div class="row">
+      <label><input type="checkbox" id="accOn" checked> 🎹 伴奏（和弦）</label>
+      <span class="label" style="margin-left:8px">伴奏音量</span><input type="range" id="accVol" min="0" max="1" step="0.05" value="0.5">
+      <span class="help">谱上写了和弦字母时，旋律下面会垫着弹。蓝色的琴键是和弦要同时按的键。</span>
     </div>
     <div id="msg"></div>
   </div>
@@ -166,6 +185,13 @@
         <button data-d="0">0 停</button>
       </div>
       <div class="row">
+        <span class="label">和弦</span>
+        <select id="chRoot"><option>C</option><option value="Db">♭D（♯C）</option><option>D</option><option value="Eb">♭E</option><option>E</option><option>F</option><option value="F#">♯F</option><option>G</option><option value="Ab">♭A</option><option>A</option><option value="Bb">♭B</option><option>B</option></select>
+        <select id="chQ"><option value="">大（F）</option><option value="m">小（Fm）</option><option value="7">属七（F7）</option><option value="m7">小七（Fm7）</option><option value="maj7">大七（Fmaj7）</option><option value="sus4">挂四（Fsus4）</option><option value="dim">减（Fdim）</option></select>
+        <button id="addChord">＋ 加和弦</button>
+        <span class="help">加在你要换和弦的那个音前面</span>
+      </div>
+      <div class="row">
         <button data-tok="-">－ 拖长一拍</button>
         <button data-tok="-_">－ 拖长半拍</button>
         <button data-tok="|">| 小节线</button>
@@ -203,6 +229,7 @@
     <b>前面的 ♯</b>：<code>#4</code> 或 <code>4#</code> 都行。数字上面的点是高音：<code>i</code> 或 <code>1*</code>；数字下面的点是低音：<code>.7</code>。<br>
     <b>下划线的几个音</b>用括号括起来：<code>(5 6)</code> 每个半拍，<code>((5 6))</code> 每个四分之一拍；可以连着写不用空格：<code>0 (56)(54)(34)</code>。<br>
     <b>连音线</b>（两个一样的音连在一起，当一个长音）：<code>2 ~ 2</code>。<br>
+    <b>和弦字母</b>（谱上数字上面的 F、C、Gm、B♭、C7…）：写在要换和弦的那个音前面，用大括号：<code>{F} 0 (56)(54)(34)</code>。字母一直管到下一个字母出现。<br>
     <b>反复、1./2. 结尾</b>：把每一段分开写，然后在“播放顺序”里排，比如 主歌 → 结尾1 → 主歌 → 结尾2。<br>
     下面的按钮可以代替打字。
   </div>
@@ -226,12 +253,29 @@ const hz = semi => 261.63 * Math.pow(2, (semi + transpose()) / 12);    // semi�
 const PCN = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 const noteLabel = abs => PCN[((abs % 12) + 12) % 12] + (4 + Math.floor(abs / 12));
 
+// ---------- 和弦 ----------
+const CH_Q = { "": [0, 4, 7], M: [0, 4, 7], m: [0, 3, 7], "7": [0, 4, 7, 10], m7: [0, 3, 7, 10], maj7: [0, 4, 7, 11], M7: [0, 4, 7, 11], dim: [0, 3, 6],
+  aug: [0, 4, 8], sus4: [0, 5, 7], sus2: [0, 2, 7], "6": [0, 4, 7, 9], m6: [0, 3, 7, 9], add9: [0, 4, 7, 14], "9": [0, 4, 7, 10, 14], dim7: [0, 3, 6, 9], m7b5: [0, 3, 6, 10] };
+const PCL = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+function parseChord(raw) {
+  const nm = raw.trim().replace(/♯/g, "#").replace(/♭/g, "b");
+  const m = /^([A-G])([#b]?)([^/]*)(?:\/([A-G])([#b]?))?$/.exec(nm);
+  if (!m || !(m[3] in CH_Q)) return null;
+  const acc = a => a === "#" ? 1 : a === "b" ? -1 : 0, pcOf = (l, a) => (((PCL[l] + acc(a)) % 12) + 12) % 12;
+  return { name: nm.replace(/^([A-G])b/, "$1♭").replace(/^([A-G])#/, "$1♯").replace(/\/([A-G])b/, "/$1♭").replace(/\/([A-G])#/, "/$1♯"),
+    pc: pcOf(m[1], m[2]), ints: CH_Q[m[3]], bass: m[4] ? pcOf(m[4], m[5]) : undefined };
+}
+const hzAbs = semi => 261.63 * Math.pow(2, semi / 12);
+const wrap12 = n => ((n % 12) + 12) % 12;
+function chordTones(c) { const r = wrap12(c.pc + (song.shift || 0)) - 12; return c.ints.map(i => r + i); }   // 和弦的几个音（C3 附近）
+function chordBass(c) { return wrap12((c.bass === undefined ? c.pc : c.bass) + (song.shift || 0)) - 24; }     // 低音（C2 附近）
+
 // ---------- 歌的数据 ----------
 const uid = () => "s" + Math.random().toString(36).slice(2, 8);
-function newSong() { const id = uid(); return { name: "", bpm: 96, key: 0, shift: 0, sections: [{ id, name: "主歌", text: "", lyrics: "" }], order: [{ sec: id, rep: 1, on: true }] }; }
+function newSong() { const id = uid(); return { name: "", bpm: 96, key: 0, shift: 0, meter: 4, sections: [{ id, name: "主歌", text: "", lyrics: "" }], order: [{ sec: id, rep: 1, on: true }] }; }
 function demoSong() {
   const a = uid(), b = uid();
-  return { name: "小星星", bpm: 96, key: 0, shift: 0,
+  return { name: "小星星", bpm: 96, key: 0, shift: 0, meter: 4,
     sections: [
       { id: a, name: "主歌", text: "1 1 5 5 | 6 6 5 - | 4 4 3 3 | 2 2 1 -", lyrics: "一 闪 一 闪 亮 晶 晶 满 天 都 是 小 星 星" },
       { id: b, name: "副歌", text: "5 5 4 4 | 3 3 2 - | 5 5 4 4 | 3 3 2 -", lyrics: "挂 在 天 空 放 光 明 好 像 许 多 小 眼 睛" } ],
@@ -252,6 +296,11 @@ function parseSection(text) {
     const c = text[i];
     if (/[\s:：,，]/.test(c)) { i++; continue; }
     if (c === "|" || c === "｜" || c === "‖") { items.push({ t: "bar" }); i++; continue; }
+    if (c === "{" || c === "[" || c === "｛") {      // 和弦：{F}  {Gm}  {Bb}  {C7}
+      const e = text.indexOf(c === "[" ? "]" : c === "{" ? "}" : "｝", i + 1), ch = e > i ? parseChord(text.slice(i + 1, e)) : null;
+      if (ch) { items.push({ t: "chord", name: ch.name, chord: ch }); i = e + 1; } else { bad(c); i++; }
+      continue;
+    }
     if (c === "(" || c === "（") { depth++; i++; continue; }
     if (c === ")" || c === "）") { depth = Math.max(0, depth - 1); i++; continue; }
     if (c === "~" || c === "～") {
@@ -260,12 +309,12 @@ function parseSection(text) {
     }
     if (c === "-" || c === "－" || c === "—") {
       let j = i + 1, us = 0; while (text[j] === "_" && us < 2) { us++; j++; }
-      if (!cur) bad(c); else { cur.beats += 1 / Math.pow(2, us); items.push({ t: "ext", owner: cur, u: us }); }
+      if (!cur) bad(c); else { const b = 1 / Math.pow(2, us); cur.beats += b; items.push({ t: "ext", owner: cur, u: us, b }); }
       i = j; continue;
     }
     // 单独一个“.”（前面隔了空格）：当作前一个音的附点
     if (c === "." && !isD(text[i + 1]) && text[i + 1] !== "#" && text[i + 1] !== "♯") {
-      if (cur && !cur.dot && cur.t !== "bad") { cur.dot = true; cur.beats *= 1.5; } else bad(c);
+      if (cur && !cur.dot) { cur.dot = true; cur.beats *= 1.5; cur.base *= 1.5; } else bad(c);
       i++; continue;
     }
     // 音符：前缀（# 或 .低音）+ 数字 + 后缀（# * _ . ）
@@ -286,16 +335,16 @@ function parseSection(text) {
       else break;
     }
     const u = Math.min(2, us + depth), beats = (1 / Math.pow(2, u)) * (dot ? 1.5 : 1);
-    if (d === "0") { cur = { t: "rest", u, dot, beats }; items.push(cur); tieFrom = null; i = j; continue; }
+    if (d === "0") { cur = { t: "rest", u, dot, beats, base: beats }; items.push(cur); tieFrom = null; i = j; continue; }
     if (low && high) { bad(text.slice(i, j)); i = j; continue; }
     const name = (low ? "." : "") + d + (sharp ? "#" : "") + (high ? "*" : "");
     const semi = SEMI[d] + (sharp ? 1 : 0) + (high ? 12 : 0) - (low ? 12 : 0);
     if (tieFrom && tieFrom.semi === semi) {       // 连音线：合成一个长音
       tieFrom.beats += beats; cur = tieFrom; tieFrom = null;
-      items.push({ t: "ext", owner: cur, u, tied: true, label: (sharp ? "♯" : "") + d, dot });
+      items.push({ t: "ext", owner: cur, u, tied: true, b: beats, label: (sharp ? "♯" : "") + d, dot });
     } else {
       tieFrom = null;
-      cur = { t: "note", name, digit: d, low, high, sharp, semi, u, dot, beats }; items.push(cur);
+      cur = { t: "note", name, digit: d, low, high, sharp, semi, u, dot, beats, base: beats }; items.push(cur);
     }
     i = j;
   }
@@ -307,22 +356,26 @@ function mk(tag, cls, txt) { const e = document.createElement(tag); if (cls) e.c
 function renderScore(sec, items) {
   const box = $("score"); box.innerHTML = "";
   items = items || parseSection(sec.text);
-  const ly = sec.lyrics.split(/\s+/).filter(Boolean); let li = 0;
+  const ly = sec.lyrics.split(/\s+/).filter(Boolean); let li = 0, pend = "";
+  const ch = txt => mk("i", "ch", txt || "");
   items.forEach(it => {
     let el;
+    if (it.t === "chord") { pend = it.name; it.el = null; return; }
     if (it.t === "bar") { el = mk("span", "bar"); }
     else if (it.t === "bad") { el = mk("span", "it bad"); el.appendChild(mk("b", "dg", it.tok)); }
-    else if (it.t === "tie") { el = mk("span", "it"); el.style.minWidth = "0"; el.append(mk("i", "dt", ""), mk("b", "dg", "⁀"), mk("i", "dt", ""), mk("em", "ly", "")); el.style.color = "#9ca3af"; }
+    else if (it.t === "tie") { el = mk("span", "it"); el.style.minWidth = "0"; el.style.color = "#9ca3af"; el.append(ch(), mk("i", "dt", ""), mk("b", "dg", "⁀"), mk("i", "dt", ""), mk("em", "ly", "")); }
     else if (it.t === "ext") {
-      el = mk("span", "it"); el.append(mk("i", "dt", ""), mk("b", "dg u" + it.u, it.tied ? "(" + it.label + ")" + (it.dot ? "·" : "") : "–"), mk("i", "dt", ""), mk("em", "ly", ""));
+      el = mk("span", "it"); el.append(ch(), mk("i", "dt", ""), mk("b", "dg u" + it.u, it.tied ? "(" + it.label + ")" + (it.dot ? "·" : "") : "–"), mk("i", "dt", ""), mk("em", "ly", ""));
       (it.owner.exts = it.owner.exts || []).push(el);
     } else {
       el = mk("span", "it" + (it.t === "rest" ? " rest" : ""));
       const lyric = it.t === "note" ? (ly[li++] || "") : "";
-      el.append(mk("i", "dt", it.high ? "•" : ""),
+      el.append(ch(pend),
+        mk("i", "dt", it.high ? "•" : ""),
         mk("b", "dg u" + it.u, (it.sharp ? "♯" : "") + (it.t === "rest" ? "0" : it.digit) + (it.dot ? "·" : "")),
         mk("i", "dt", it.low ? "•" : ""),
         mk("em", "ly", /^[_-]$/.test(lyric) ? "" : lyric));
+      pend = "";
     }
     it.el = el; box.appendChild(el);
   });
@@ -351,7 +404,7 @@ const keyEls = {};
       keyEls[semi + 1] = b; box.appendChild(b);
     }
   }
-  Object.entries(keyEls).forEach(([semi, el]) => el.onclick = () => { ensureCtx(); beep(261.63 * Math.pow(2, +semi / 12), ctx.currentTime, 0.4); });
+  Object.entries(keyEls).forEach(([semi, el]) => el.onclick = () => { ensureCtx(); voice("mel", 261.63 * Math.pow(2, +semi / 12), ctx.currentTime, 0.6); });
 })();
 
 // ---------- 声音 ----------
@@ -362,14 +415,152 @@ function ensureCtx() {
   master.gain.value = parseFloat($("vol").value);
 }
 $("vol").oninput = () => { if (master) master.gain.value = parseFloat($("vol").value); };
-function beep(freq, start, dur) {
-  const osc = ctx.createOscillator(), g = ctx.createGain();
-  osc.type = "triangle"; osc.frequency.value = freq;
-  const r = Math.min(0.08, dur / 3);
-  g.gain.setValueAtTime(0, start); g.gain.linearRampToValueAtTime(0.8, start + 0.02);
-  g.gain.setValueAtTime(0.8, start + Math.max(0.02, dur - r)); g.gain.linearRampToValueAtTime(0, start + dur);
-  osc.connect(g); g.connect(master); osc.start(start); osc.stop(start + dur + 0.02); live.push(osc);
+const track = o => { live.push(o); return o; };
+function noiseBuf(sec) {
+  const b = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * sec), ctx.sampleRate), d = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return b;
 }
+// 每个乐器：f 频率，t 开始时间，d 持续秒数，pk 音量
+function sOsc(type, f, t, end, dest, detune = 0) {
+  const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; o.detune.value = detune; o.connect(dest); o.start(t); o.stop(end); return track(o);
+}
+function synthPiano(f, t, d, pk) {
+  d = Math.max(d, 0.06);
+  const P = [[1, 1, 1], [2, 0.55, 0.75], [3, 0.35, 0.55], [4, 0.22, 0.4], [5, 0.14, 0.3], [6, 0.09, 0.22], [7, 0.05, 0.15]];
+  const tau = Math.min(4.5, Math.max(0.7, 2.4 * Math.pow(261.63 / f, 0.55))), rel = 0.2, sum = P.reduce((a, p) => a + p[1], 0);
+  const out = ctx.createGain(), lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = Math.min(9000, f * 14);
+  out.gain.value = (pk / sum) * 1.25; out.connect(lp); lp.connect(master);
+  P.forEach(([n, a, df]) => {
+    const fr = n * f * Math.sqrt(1 + 0.0003 * n * n); if (fr > 12000) return;
+    [0, n <= 3 ? 1.6 : null].forEach(cents => {
+      if (cents === null) return;
+      const g = ctx.createGain(), amp = cents ? a * 0.5 : a, tn = tau * df;
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(amp, t + 0.004);
+      g.gain.exponentialRampToValueAtTime(Math.max(1e-4, amp * Math.exp(-d / tn)), t + d);
+      g.gain.linearRampToValueAtTime(0, t + d + rel); g.connect(out);
+      sOsc("sine", fr, t, t + d + rel + 0.02, g, cents);
+    });
+  });
+  // 琴槌敲击的“嗒”声
+  const nz = ctx.createBufferSource(); nz.buffer = noiseBuf(0.05); const ng = ctx.createGain(), nf = ctx.createBiquadFilter();
+  nf.type = "bandpass"; nf.frequency.value = Math.min(4000, f * 3); ng.gain.setValueAtTime(pk * 0.12, t); ng.gain.exponentialRampToValueAtTime(1e-4, t + 0.05);
+  nz.connect(nf); nf.connect(ng); ng.connect(master); nz.start(t); nz.stop(t + 0.06); track(nz);
+}
+function synthEPiano(f, t, d, pk) {
+  d = Math.max(d, 0.06); const rel = 0.2, g = ctx.createGain(), tau = 1.6;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(pk * 0.8, t + 0.006);
+  g.gain.exponentialRampToValueAtTime(Math.max(1e-4, pk * 0.8 * Math.exp(-d / tau)), t + d); g.gain.linearRampToValueAtTime(0, t + d + rel); g.connect(master);
+  const car = ctx.createOscillator(), mod = ctx.createOscillator(), mg = ctx.createGain();
+  car.frequency.value = f; mod.frequency.value = f; mod.connect(mg); mg.connect(car.frequency);
+  mg.gain.setValueAtTime(f * 2.4, t); mg.gain.exponentialRampToValueAtTime(f * 0.2, t + 0.7);
+  car.connect(g); car.start(t); mod.start(t); car.stop(t + d + rel + 0.02); mod.stop(t + d + rel + 0.02); track(car); track(mod);
+  const bell = ctx.createGain(); bell.gain.setValueAtTime(pk * 0.08, t); bell.gain.exponentialRampToValueAtTime(1e-4, t + 0.25); bell.connect(master);
+  if (f * 7 < 12000) sOsc("sine", f * 7, t, t + 0.3, bell);
+}
+function synthOrgan(f, t, d, pk) {
+  d = Math.max(d, 0.08); const rel = 0.07, g = ctx.createGain(), P = [[1, 1], [2, 0.7], [3, 0.45], [4, 0.3], [6, 0.18], [8, 0.12]], sum = 2.75;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(pk * 0.75, t + 0.02); g.gain.setValueAtTime(pk * 0.75, t + d); g.gain.linearRampToValueAtTime(0, t + d + rel); g.connect(master);
+  P.forEach(([n, a]) => { if (f * n > 12000) return; const pg = ctx.createGain(); pg.gain.value = a / sum; pg.connect(g); sOsc("sine", f * n, t, t + d + rel + 0.02, pg); });
+}
+function synthPluck(f, t, d, pk, o) {
+  const sr = ctx.sampleRate, N = Math.max(2, Math.round(sr / f)), len = Math.ceil(sr * Math.min(d + o.ring + 0.3, 5)), line = new Float32Array(N);
+  let prev = 0; for (let i = 0; i < N; i++) { prev = o.soft * prev + (1 - o.soft) * (Math.random() * 2 - 1); line[i] = prev; }
+  let mx = 0; for (let i = 0; i < N; i++) mx = Math.max(mx, Math.abs(line[i])); for (let i = 0; i < N; i++) line[i] /= mx || 1;
+  const buf = ctx.createBuffer(1, len, sr), dat = buf.getChannelData(0); let idx = 0;
+  for (let i = 0; i < len; i++) { const a = line[idx], b = line[(idx + 1) % N]; dat[i] = a; line[idx] = o.decay * 0.5 * (a + b); idx = (idx + 1) % N; }
+  const src = ctx.createBufferSource(); src.buffer = buf; src.playbackRate.value = (f * (N + 0.5)) / sr;   // 微调到准确的音高
+  const g = ctx.createGain(); g.gain.setValueAtTime(pk * 0.9, t); const end = t + Math.max(d, 0.08) + o.ring;
+  g.gain.setValueAtTime(pk * 0.9, t + Math.max(d, 0.08)); g.gain.linearRampToValueAtTime(0, end);
+  src.connect(g); g.connect(master); src.start(t); src.stop(end + 0.02); track(src);
+}
+const synthGuitar = (f, t, d, pk) => synthPluck(f, t, d, pk, { decay: 0.996, soft: 0.45, ring: 0.5 });
+const synthHarp = (f, t, d, pk) => synthPluck(f, t, d, pk, { decay: 0.9985, soft: 0.6, ring: 1.2 });
+function synthStrings(f, t, d, pk, o) {
+  d = Math.max(d, 0.1); const rel = 0.2, g = ctx.createGain(), lp = ctx.createBiquadFilter();
+  lp.type = "lowpass"; lp.frequency.value = Math.min(4500, f * o.bright); lp.Q.value = 0.6;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(pk * 0.55, t + o.attack); g.gain.setValueAtTime(pk * 0.55, t + Math.max(o.attack, d - 0.05)); g.gain.linearRampToValueAtTime(0, t + d + rel);
+  lp.connect(g); g.connect(master);
+  const lfo = ctx.createOscillator(), lg = ctx.createGain(); lfo.frequency.value = 5.3; lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(o.vib, t + 0.5); lfo.connect(lg);
+  lfo.start(t); lfo.stop(t + d + rel + 0.02); track(lfo);
+  o.det.forEach(c => { const v = ctx.createGain(); v.gain.value = 1 / o.det.length; v.connect(lp); const os = sOsc("sawtooth", f, t, t + d + rel + 0.02, v, c); lg.connect(os.detune); });
+}
+const synthViolin = (f, t, d, pk) => synthStrings(f, t, d, pk, { attack: 0.09, bright: 7, vib: 9, det: [-6, 6] });
+const synthEnsemble = (f, t, d, pk) => synthStrings(f, t, d, pk, { attack: 0.22, bright: 5, vib: 5, det: [-14, -5, 5, 14] });
+function synthFlute(f, t, d, pk) {
+  d = Math.max(d, 0.1); const rel = 0.12, g = ctx.createGain();
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(pk * 0.8, t + 0.07); g.gain.setValueAtTime(pk * 0.8, t + Math.max(0.07, d - 0.03)); g.gain.linearRampToValueAtTime(0, t + d + rel); g.connect(master);
+  const lfo = ctx.createOscillator(), lg = ctx.createGain(); lfo.frequency.value = 5; lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(7, t + 0.35); lfo.connect(lg); lfo.start(t); lfo.stop(t + d + rel + 0.02); track(lfo);
+  [[1, 1], [2, 0.14], [3, 0.05]].forEach(([n, a]) => { const v = ctx.createGain(); v.gain.value = a; v.connect(g); const os = sOsc("sine", f * n, t, t + d + rel + 0.02, v); lg.connect(os.detune); });
+  const nz = ctx.createBufferSource(); nz.buffer = noiseBuf(Math.min(d + rel + 0.1, 6)); const bp = ctx.createBiquadFilter(), ng = ctx.createGain();
+  bp.type = "bandpass"; bp.frequency.value = Math.min(5000, f * 2.5); bp.Q.value = 0.9; ng.gain.value = 0.07; nz.connect(bp); bp.connect(ng); ng.connect(g); nz.start(t); nz.stop(t + d + rel + 0.02); track(nz);
+}
+function synthBox(f0, t, d, pk) {
+  const f = f0 * 2, P = [[1, 1, 1.1], [2.756, 0.4, 0.5], [5.404, 0.18, 0.25], [8.933, 0.08, 0.14]]; d = Math.max(d, 0.06);
+  P.forEach(([r, a, tau]) => { if (f * r > 12000) return; const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(pk * 0.7 * a, t + 0.002);
+    g.gain.exponentialRampToValueAtTime(1e-4, t + tau + 0.6); g.connect(master); sOsc("sine", f * r, t, t + tau + 0.65, g); });
+}
+function synthSquare(f, t, d, pk) {
+  d = Math.max(d, 0.06); const rel = 0.08, g = ctx.createGain(), lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = Math.min(3500, f * 5);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(pk * 0.45, t + 0.01); g.gain.setValueAtTime(pk * 0.45, t + d); g.gain.linearRampToValueAtTime(0, t + d + rel);
+  lp.connect(g); g.connect(master); sOsc("square", f, t, t + d + rel + 0.02, lp);
+}
+// 真实乐器录音（FluidR3 音色库，托管在 GitHub Pages，要联网）
+const SF_URL = "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/";
+const SF_NAMES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+const midiKey = m => SF_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+const sfCache = {};
+async function sfEnsure(name, midis) {
+  const sf = sfCache[name] || (sfCache[name] = { raw: null, buf: {}, ready: false, failed: false });
+  if (sf.failed) return false;
+  try {
+    if (!sf.raw) {
+      const r = await fetch(SF_URL + name + "-mp3.js"); if (!r.ok) throw new Error("HTTP " + r.status);
+      const txt = await r.text(), raw = {}, re = /"([A-G][b#]?\d)"\s*:\s*"(data:audio\/[a-z0-9.+-]+;base64,[^"]+)"/g; let m;
+      while ((m = re.exec(txt))) raw[m[1]] = m[2];
+      if (!Object.keys(raw).length) throw new Error("格式不对");
+      sf.raw = raw;
+    }
+    for (const mi of midis) {
+      if (sf.buf[mi]) continue; const uri = sf.raw[midiKey(mi)]; if (!uri) continue;
+      sf.buf[mi] = await ctx.decodeAudioData(await (await fetch(uri)).arrayBuffer());
+    }
+    sf.ready = Object.keys(sf.buf).length > 0; return sf.ready;
+  } catch (e) { sf.failed = true; return false; }
+}
+function playSample(sf, f, t, d, pk) {
+  const midi = Math.round(69 + 12 * Math.log2(f / 440)); let best = null, bd = 99;
+  for (const k in sf.buf) { const dd = Math.abs(k - midi); if (dd < bd) { bd = dd; best = +k; } }
+  if (best === null || bd > 6) return false;
+  d = Math.max(d, 0.08); const rel = 0.35, src = ctx.createBufferSource(), g = ctx.createGain();
+  src.buffer = sf.buf[best]; src.playbackRate.value = Math.pow(2, (midi - best) / 12);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(pk * 0.95, t + 0.006); g.gain.setValueAtTime(pk * 0.95, t + d); g.gain.linearRampToValueAtTime(0, t + d + rel);
+  src.connect(g); g.connect(master); src.start(t); src.stop(t + d + rel + 0.02); track(src); return true;
+}
+const INSTR = {
+  piano: { label: "钢琴", fn: synthPiano }, epiano: { label: "电钢琴", fn: synthEPiano }, organ: { label: "管风琴", fn: synthOrgan },
+  guitar: { label: "吉他（拨弦）", fn: synthGuitar }, harp: { label: "竖琴", fn: synthHarp }, violin: { label: "小提琴", fn: synthViolin },
+  strings: { label: "弦乐合奏", fn: synthEnsemble }, flute: { label: "长笛", fn: synthFlute }, box: { label: "八音盒", fn: synthBox }, square: { label: "电子（方波）", fn: synthSquare },
+  s_piano: { label: "🌐 真钢琴（大钢琴）", sf: "acoustic_grand_piano", fb: "piano" }, s_epiano: { label: "🌐 真电钢琴", sf: "electric_piano_1", fb: "epiano" },
+  s_organ: { label: "🌐 真管风琴（教堂）", sf: "church_organ", fb: "organ" }, s_nylon: { label: "🌐 真吉他（尼龙弦）", sf: "acoustic_guitar_nylon", fb: "guitar" },
+  s_steel: { label: "🌐 真吉他（钢弦）", sf: "acoustic_guitar_steel", fb: "guitar" }, s_harp: { label: "🌐 真竖琴", sf: "orchestral_harp", fb: "harp" },
+  s_violin: { label: "🌐 真小提琴", sf: "violin", fb: "violin" }, s_cello: { label: "🌐 真大提琴", sf: "cello", fb: "violin" },
+  s_strings: { label: "🌐 真弦乐合奏", sf: "string_ensemble_1", fb: "strings" }, s_flute: { label: "🌐 真长笛", sf: "flute", fb: "flute" },
+  s_choir: { label: "🌐 真合唱（啊～）", sf: "choir_aahs", fb: "strings" }, s_box: { label: "🌐 真八音盒", sf: "music_box", fb: "box" },
+};
+function playInst(id, f, t, d, pk) {
+  const ins = INSTR[id] || INSTR.piano;
+  if (ins.sf) { const sf = sfCache[ins.sf]; if (sf && sf.ready && playSample(sf, f, t, d, pk)) return; return INSTR[ins.fb].fn(f, t, d, pk); }
+  ins.fn(f, t, d, pk);
+}
+const voice = (role, f, t, d, pk = 0.8) => playInst(role === "acc" ? $("instAcc").value : $("instMel").value, f, Math.max(t, ctx.currentTime), d, pk);
+(function fillInst() {
+  const mk2 = (sel, dflt) => {
+    const a = document.createElement("optgroup"), b = document.createElement("optgroup"); a.label = "内置（不用联网）"; b.label = "🌐 真实录音（要联网）";
+    Object.entries(INSTR).forEach(([id, v]) => { const o = document.createElement("option"); o.value = id; o.textContent = v.label; (v.sf ? b : a).appendChild(o); });
+    sel.append(a, b); sel.value = dflt;
+  };
+  mk2($("instMel"), "piano"); mk2($("instAcc"), "piano");
+})();
 
 // ---------- 播放 ----------
 let playing = false, timers = [];
@@ -377,6 +568,17 @@ function clearHL() {
   $("score").querySelectorAll(".on").forEach(e => e.classList.remove("on"));
   $("piano").querySelectorAll(".on").forEach(e => e.classList.remove("on"));
   $("nowKey").textContent = "";
+}
+function clearChordHL() {
+  $("piano").querySelectorAll(".ck").forEach(e => e.classList.remove("ck"));
+  $("nowChord").textContent = "";
+}
+function showChord(c) {
+  clearChordHL();
+  const tones = chordTones(c), names = [...new Set(tones.map(t => PCN[wrap12(t)]))];
+  tones.forEach(t => { if (keyEls[t]) keyEls[t].classList.add("ck"); });
+  const b = wrap12(chordBass(c));
+  $("nowChord").textContent = `和弦 ${c.name}：同时按 ${names.join(" ")}（左手低音 ${PCN[b]}）`;
 }
 let shown = null;
 function showPart(part) {
@@ -396,33 +598,67 @@ function hl(it, part) {
   const box = $("score"); box.scrollTop = it.el.offsetTop - box.clientHeight / 2;
 }
 function stop() {
-  playing = false; shown = null; timers.forEach(clearTimeout); timers = [];
+  playToken++; playing = false; shown = null; timers.forEach(clearTimeout); timers = [];
   live.forEach(o => { try { o.stop(); } catch (e) {} }); live.length = 0;
   $("playBtn").style.display = ""; $("stopBtn").style.display = "none"; $("now").textContent = "";
-  clearHL(); showEditorScore();
+  clearHL(); clearChordHL(); showEditorScore();
 }
 $("stopBtn").onclick = stop;
-function play(entries) {
+function scheduleChords(ev, endGt, t0, spb, meter, delay) {
+  const accVol = parseFloat($("accVol").value), step = meter === 3 ? 1 : 2, bassEvery = meter === 4 ? 2 : meter === 3 ? 3 : 1;
+  ev.forEach((e, i) => {
+    const en = i + 1 < ev.length ? ev[i + 1].gt : endGt, tones = chordTones(e.chord), bass = chordBass(e.chord);
+    timers.push(setTimeout(() => showChord(e.chord), delay(t0 + e.gt * spb)));
+    for (let k = 0, b = e.gt; b < en - 0.01; k++, b += step) {
+      const at = t0 + b * spb, dur = Math.min(step, en - b) * spb * 0.97;
+      if (k % bassEvery === 0) voice("acc", hzAbs(bass), at, dur, 0.6 * accVol);
+      tones.forEach(t => voice("acc", hzAbs(t), at, dur, 0.28 * accVol));
+    }
+  });
+}
+let playToken = 0;
+async function play(entries) {
   stop();
-  const plan = [];
+  const my = ++playToken, plan = [];
   entries.forEach(e => { const sec = secOf(e.sec); if (sec) for (let r = 1; r <= e.rep; r++) plan.push({ sec, r, of: e.rep }); });
   if (!plan.length) { say("没有可以播的段落：请在“播放顺序”里勾选，或点“只播”某一段。"); return; }
   ensureCtx();
-  const spb = 60 / song.bpm; let t = ctx.currentTime + 0.15;
-  playing = true; $("playBtn").style.display = "none"; $("stopBtn").style.display = ""; say("");
-  const delay = at => Math.max(0, (at - ctx.currentTime) * 1000);
+  const accOn = $("accOn").checked, mel = $("instMel").value, acc = $("instAcc").value, need = {};
+  const addNeed = (id, midi) => { const ins = INSTR[id]; if (ins && ins.sf) (need[ins.sf] = need[ins.sf] || new Set()).add(midi); };
   plan.forEach(part => {
     part.items = parseSection(part.sec.text);
-    timers.push(setTimeout(() => showPart(part), delay(t)));
     part.items.forEach(it => {
-      if (it.t !== "note" && it.t !== "rest") return;
-      const at = t;
-      if (it.t === "note") beep(hz(it.semi), at, it.beats * spb * 0.93);
-      timers.push(setTimeout(() => hl(it, part), delay(at)));
-      t += it.beats * spb;
+      if (it.t === "note") addNeed(mel, 60 + it.semi + transpose());
+      if (it.t === "chord" && accOn) { chordTones(it.chord).forEach(x => addNeed(acc, 60 + x)); addNeed(acc, 60 + chordBass(it.chord)); }
     });
   });
-  timers.push(setTimeout(() => { stop(); say("播放完了 ✓", true); }, delay(t) + 150));
+  if (Object.keys(need).length) {
+    $("playBtn").style.display = "none"; $("stopBtn").style.display = ""; say("正在准备乐器声音…第一次要下载，请稍等几秒。", true);
+    const res = await Promise.all(Object.entries(need).map(([n, set]) => sfEnsure(n, set)));
+    if (my !== playToken) return;
+    if (res.some(r => !r)) say("联网下载乐器声音失败了，这次先用内置的合成音色代替。", false); else say("");
+  }
+  if (my !== playToken) return;
+  const spb = 60 / song.bpm, t0 = ctx.currentTime + 0.15;
+  playing = true; $("playBtn").style.display = "none"; $("stopBtn").style.display = "";
+  const delay = at => Math.max(0, (at - ctx.currentTime) * 1000);
+  let gt = 0; const chordEv = [];     // gt：从头数起的拍数
+  plan.forEach(part => {
+    timers.push(setTimeout(() => showPart(part), delay(t0 + gt * spb)));
+    let vt = gt;
+    part.items.forEach(it => {
+      if (it.t === "chord") chordEv.push({ gt: vt, chord: it.chord });
+      else if (it.t === "note" || it.t === "rest") {
+        const at = t0 + vt * spb;
+        if (it.t === "note") voice("mel", hz(it.semi), at, it.beats * spb * 0.93);
+        timers.push(setTimeout(() => hl(it, part), delay(at)));
+        vt += it.base;
+      } else if (it.t === "ext") vt += it.b;
+    });
+    gt = vt;
+  });
+  if (accOn) scheduleChords(chordEv, gt, t0, spb, song.meter || 4, delay);
+  timers.push(setTimeout(() => { stop(); say("播放完了 ✓", true); }, delay(t0 + gt * spb) + 150));
 }
 $("playBtn").onclick = () => play(song.order.filter(o => o.on));
 
@@ -496,6 +732,7 @@ function groupBtns(attr, fn) {
 groupBtns("data-r", v => padR = +v);
 groupBtns("data-o", v => padO = v);
 $("sharpBtn").onclick = () => { padSharp = !padSharp; $("sharpBtn").classList.toggle("on", padSharp); };
+$("addChord").onclick = () => insertTok("{" + $("chRoot").value + $("chQ").value + "}");
 $("dotBtn").onclick = () => { padDot = !padDot; $("dotBtn").classList.toggle("on", padDot); };
 function insertTok(tok) {
   const s = secOf(activeId); s.text = (s.text.trim() + " " + tok).trim(); $("secText").value = s.text; persist(); showEditorScore();
@@ -505,7 +742,7 @@ document.querySelectorAll("[data-d]").forEach(b => b.onclick = () => {
   const d = b.dataset.d, us = "_".repeat(padR) + (padDot ? "." : "");
   if (d === "0") { insertTok("0" + us); return; }
   const name = (padO === "low" ? "." : "") + d + (padSharp ? "#" : "") + (padO === "high" ? "*" : "");
-  ensureCtx(); beep(hz(SEMI[d] + (padSharp ? 1 : 0) + (padO === "high" ? 12 : padO === "low" ? -12 : 0)), ctx.currentTime, 0.3); insertTok(name + us);
+  ensureCtx(); voice("mel", hz(SEMI[d] + (padSharp ? 1 : 0) + (padO === "high" ? 12 : padO === "low" ? -12 : 0)), ctx.currentTime, 0.5); insertTok(name + us);
 });
 document.querySelectorAll("[data-tok]").forEach(b => b.onclick = () => insertTok(b.dataset.tok));
 $("bkTok").onclick = () => {
@@ -517,7 +754,7 @@ $("bkTok").onclick = () => {
 const clone = o => JSON.parse(JSON.stringify(o));
 function loadSongs() { try { return JSON.parse(localStorage.getItem("gepu_songs")) || []; } catch (e) { return []; } }
 function storeSongs(a) { try { localStorage.setItem("gepu_songs", JSON.stringify(a)); return true; } catch (e) { return false; } }
-const sigOf = s => JSON.stringify([s.bpm, s.key || 0, s.shift || 0, s.sections.map(x => [x.name, x.text, x.lyrics])]);
+const sigOf = s => JSON.stringify([s.bpm, s.key || 0, s.shift || 0, s.meter || 4, s.sections.map(x => [x.name, x.text, x.lyrics])]);
 function sanitize(x) {
   if (!x || typeof x.name !== "string" || !Array.isArray(x.sections) || !x.sections.length) return null;
   const used = new Set(), map = {};
@@ -530,9 +767,10 @@ function sanitize(x) {
   let order = Array.isArray(x.order) ? x.order.slice(0, 200).filter(o => o && map[o.sec]).map(o => ({ sec: map[o.sec], rep: Math.max(1, Math.min(9, parseInt(o.rep) || 1)), on: o.on !== false })) : [];
   if (!order.length) order = sections.map(s => ({ sec: s.id, rep: 1, on: true }));
   const bpm = x.bpm >= 30 && x.bpm <= 300 ? Math.round(x.bpm) : 96;
+  const meter = [2, 3, 4].includes(x.meter) ? x.meter : 4;
   const key = Number.isInteger(x.key) && x.key >= 0 && x.key <= 11 ? x.key : 0;
   const shift = Number.isInteger(x.shift) && x.shift >= -12 && x.shift <= 12 ? x.shift : 0;
-  return { name: x.name.trim().slice(0, 30) || "没名字", bpm, key, shift, sections, order };
+  return { name: x.name.trim().slice(0, 30) || "没名字", bpm, key, shift, meter, sections, order };
 }
 function merge(incoming) {
   const a = loadSongs(); let added = 0, same = 0, renamed = 0;
@@ -624,7 +862,12 @@ $("bookBtn").onclick = () => {
 
 // ---------- 新歌 / 示例 / 启动 ----------
 const shText = () => ((song.shift || 0) > 0 ? "+" : "") + (song.shift || 0);
-function renderKey() { $("keySel").value = String(song.key || 0); $("shVal").textContent = shText(); }
+function renderKey() { $("keySel").value = String(song.key || 0); $("shVal").textContent = shText(); $("meterSel").value = String(song.meter || 4); }
+$("meterSel").onchange = e => { song.meter = +e.target.value; persist(); };
+try { const a = JSON.parse(localStorage.getItem("gepu_acc") || "{}"); if (typeof a.on === "boolean") $("accOn").checked = a.on; if (a.vol >= 0) $("accVol").value = a.vol;
+  if (INSTR[a.mel]) $("instMel").value = a.mel; if (INSTR[a.acc]) $("instAcc").value = a.acc; } catch (e) {}
+const saveAcc = () => { try { localStorage.setItem("gepu_acc", JSON.stringify({ on: $("accOn").checked, vol: +$("accVol").value, mel: $("instMel").value, acc: $("instAcc").value })); } catch (e) {} };
+$("accOn").onchange = saveAcc; $("accVol").oninput = saveAcc; $("instMel").onchange = saveAcc; $("instAcc").onchange = saveAcc;
 $("keySel").onchange = e => { song.key = +e.target.value; persist(); };
 $("shUp").onclick = () => { song.shift = Math.min(12, (song.shift || 0) + 1); renderKey(); persist(); };
 $("shDn").onclick = () => { song.shift = Math.max(-12, (song.shift || 0) - 1); renderKey(); persist(); };
