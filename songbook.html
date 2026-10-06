@@ -87,6 +87,20 @@
       <span class="help">（歌谱上写 ♩=96 就填 96；越大越快）</span>
     </div>
     <div class="row">
+      <span class="label">调</span>1 =
+      <select id="keySel">
+        <option value="0">C</option><option value="1">♯C / ♭D</option><option value="2">D</option><option value="3">♭E</option>
+        <option value="4">E</option><option value="5">F</option><option value="6">♯F</option><option value="7">G</option>
+        <option value="8">♭A</option><option value="9">A</option><option value="10">♭B</option><option value="11">B</option>
+      </select>
+      <span class="help">（谱子左上角写 “F major” 就选 F，“D major” 就选 D）</span>
+    </div>
+    <div class="row">
+      <span class="label">升降</span>
+      <button id="shDn">♭ 降半音</button><b id="shVal" style="min-width:36px;text-align:center">0</b><button id="shUp">♯ 升半音</button>
+      <span class="help">（太高唱不上去或太低时用，整首一起升降）</span>
+    </div>
+    <div class="row">
       <button id="newBtn">📄 新歌</button>
       <button id="demoBtn">🌟 载入示例（小星星）</button>
     </div>
@@ -98,7 +112,7 @@
     <div id="now"></div>
     <div id="score"></div>
     <div class="piano" id="piano"></div>
-    <div class="pianoNote"><span>← 低音</span><span>中音</span><span>高音 →</span></div>
+    <div class="pianoNote"><span>← 低音</span><span id="nowKey" style="font-weight:600;color:#1f2937"></span><span>高音 →</span></div>
     <div class="row" style="margin-top:12px">
       <button id="playBtn" class="primary">▶ 按顺序播放</button>
       <button id="stopBtn" class="stop" style="display:none">■ 停止</button>
@@ -144,6 +158,7 @@
         <button data-o="mid" class="on">中音</button>
         <button data-o="high">高音</button>
         <button id="sharpBtn">♯ 升半音</button>
+        <button id="dotBtn">· 附点</button>
       </div>
       <div class="row">
         <button data-d="1">1</button><button data-d="2">2</button><button data-d="3">3</button><button data-d="4">4</button>
@@ -154,6 +169,7 @@
         <button data-tok="-">－ 拖长一拍</button>
         <button data-tok="-_">－ 拖长半拍</button>
         <button data-tok="|">| 小节线</button>
+        <button data-tok="~">⌒ 连音线</button>
         <button id="bkTok">⌫ 删最后一个</button>
       </div>
     </div>
@@ -170,6 +186,7 @@
       <button id="exportAll">📤 导出全部</button>
       <button id="importBtn">📥 导入（合并进来）</button>
       <button id="oldBtn">📦 从旧版搬过来</button>
+      <button id="bookBtn">📚 载入我的歌谱本里的歌（4 首）</button>
       <input type="file" id="importFile" accept=".json,application/json" style="display:none">
     </div>
     <div id="songs"></div>
@@ -182,10 +199,16 @@
     一拍：<code>1</code>　半拍（数字下面一道线）：<code>1_</code>　四分之一拍（两道线）：<code>1__</code><br>
     拖长：<code>1 -</code> 是 2 拍，<code>1 - -</code> 是 3 拍，<code>-_</code> 再多半拍。<br>
     停顿：<code>0</code>（一拍），<code>0_</code>（半拍）。小节线 <code>|</code> 只是方便你对照歌谱，不影响播放。<br>
+    <b>数字右边的点（附点）</b>：<code>5.</code> 就是比原来长一半（一拍变一拍半）。点后面要空一格再写下一个音。<br>
+    <b>前面的 ♯</b>：<code>#4</code> 或 <code>4#</code> 都行。数字上面的点是高音：<code>i</code> 或 <code>1*</code>；数字下面的点是低音：<code>.7</code>。<br>
+    <b>下划线的几个音</b>用括号括起来：<code>(5 6)</code> 每个半拍，<code>((5 6))</code> 每个四分之一拍；可以连着写不用空格：<code>0 (56)(54)(34)</code>。<br>
+    <b>连音线</b>（两个一样的音连在一起，当一个长音）：<code>2 ~ 2</code>。<br>
+    <b>反复、1./2. 结尾</b>：把每一段分开写，然后在“播放顺序”里排，比如 主歌 → 结尾1 → 主歌 → 结尾2。<br>
     下面的按钮可以代替打字。
   </div>
 </div>
 
+<script src="book-songs.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const say = (t, ok) => { $("msg").textContent = t; $("msg").className = ok ? "ok" : ""; };
@@ -198,12 +221,17 @@ function freqOf(name) {
   return 261.63 * Math.pow(2, (SEMI[m[2]] + (m[3] ? 1 : 0) - (m[1] ? 12 : 0) + (m[4] ? 12 : 0)) / 12);
 }
 
+const transpose = () => (song.key || 0) + (song.shift || 0);          // 调 + 升降（半音数）
+const hz = semi => 261.63 * Math.pow(2, (semi + transpose()) / 12);    // semi：相对中央 C 的半音数（1=C 时）
+const PCN = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+const noteLabel = abs => PCN[((abs % 12) + 12) % 12] + (4 + Math.floor(abs / 12));
+
 // ---------- 歌的数据 ----------
 const uid = () => "s" + Math.random().toString(36).slice(2, 8);
-function newSong() { const id = uid(); return { name: "", bpm: 96, sections: [{ id, name: "主歌", text: "", lyrics: "" }], order: [{ sec: id, rep: 1, on: true }] }; }
+function newSong() { const id = uid(); return { name: "", bpm: 96, key: 0, shift: 0, sections: [{ id, name: "主歌", text: "", lyrics: "" }], order: [{ sec: id, rep: 1, on: true }] }; }
 function demoSong() {
   const a = uid(), b = uid();
-  return { name: "小星星", bpm: 96,
+  return { name: "小星星", bpm: 96, key: 0, shift: 0,
     sections: [
       { id: a, name: "主歌", text: "1 1 5 5 | 6 6 5 - | 4 4 3 3 | 2 2 1 -", lyrics: "一 闪 一 闪 亮 晶 晶 满 天 都 是 小 星 星" },
       { id: b, name: "副歌", text: "5 5 4 4 | 3 3 2 - | 5 5 4 4 | 3 3 2 -", lyrics: "挂 在 天 空 放 光 明 好 像 许 多 小 眼 睛" } ],
@@ -214,26 +242,62 @@ const secOf = id => song.sections.find(s => s.id === id);
 function persist() { try { localStorage.setItem("gepu_current", JSON.stringify(song)); } catch (e) {} }
 
 // ---------- 解析歌谱 ----------
+// 一个一个字符读，所以数字可以连着写（0565434），空格可有可无。
 function parseSection(text) {
-  const items = []; let cur = null;
-  for (const tok of text.split(/\s+/).filter(Boolean)) {
-    let m;
-    if (/^\|+$/.test(tok)) { items.push({ t: "bar" }); continue; }
-    if ((m = /^-(_{0,2})$/.exec(tok))) {
-      if (!cur) { items.push({ t: "bad", tok }); continue; }
-      cur.beats += 1 / Math.pow(2, m[1].length);
-      items.push({ t: "ext", owner: cur, u: m[1].length }); continue;
+  const items = [], n = text.length;
+  let cur = null, tieFrom = null, depth = 0, i = 0;
+  const isD = c => c !== undefined && ((c >= "0" && c <= "7") || c === "i");
+  const bad = tok => items.push({ t: "bad", tok });
+  while (i < n) {
+    const c = text[i];
+    if (/[\s:：,，]/.test(c)) { i++; continue; }
+    if (c === "|" || c === "｜" || c === "‖") { items.push({ t: "bar" }); i++; continue; }
+    if (c === "(" || c === "（") { depth++; i++; continue; }
+    if (c === ")" || c === "）") { depth = Math.max(0, depth - 1); i++; continue; }
+    if (c === "~" || c === "～") {
+      if (cur && cur.t === "note") { tieFrom = cur; items.push({ t: "tie" }); } else bad(c);
+      i++; continue;
     }
-    if ((m = /^0(_{0,2})$/.exec(tok))) {
-      cur = { t: "rest", u: m[1].length, beats: 1 / Math.pow(2, m[1].length) }; items.push(cur); continue;
+    if (c === "-" || c === "－" || c === "—") {
+      let j = i + 1, us = 0; while (text[j] === "_" && us < 2) { us++; j++; }
+      if (!cur) bad(c); else { cur.beats += 1 / Math.pow(2, us); items.push({ t: "ext", owner: cur, u: us }); }
+      i = j; continue;
     }
-    if ((m = /^(\.?)([1-7])(#?)(\*?)(_{0,2})$/.exec(tok)) && !(m[1] && m[4])) {
-      const name = m[1] + m[2] + m[3] + m[4];
-      cur = { t: "note", name, digit: m[2], low: !!m[1], high: !!m[4], sharp: !!m[3], freq: freqOf(name),
-        u: m[5].length, beats: 1 / Math.pow(2, m[5].length) };
-      items.push(cur); continue;
+    // 单独一个“.”（前面隔了空格）：当作前一个音的附点
+    if (c === "." && !isD(text[i + 1]) && text[i + 1] !== "#" && text[i + 1] !== "♯") {
+      if (cur && !cur.dot && cur.t !== "bad") { cur.dot = true; cur.beats *= 1.5; } else bad(c);
+      i++; continue;
     }
-    items.push({ t: "bad", tok });
+    // 音符：前缀（# 或 .低音）+ 数字 + 后缀（# * _ . ）
+    let j = i, sharp = false, low = false;
+    while (text[j] === "#" || text[j] === "♯" || text[j] === ".") {
+      if (text[j] === ".") { if (low) break; low = true; } else sharp = true;
+      j++;
+    }
+    if (!isD(text[j])) { bad(text.slice(i, j) || c); i = Math.max(j, i + 1); continue; }
+    const ch = text[j]; j++;
+    const d = ch === "i" ? "1" : ch; let high = ch === "i", us = 0, dot = false;
+    for (;;) {
+      const x = text[j];
+      if (x === "#" || x === "♯") { sharp = true; j++; }
+      else if (x === "*" || x === "'") { high = true; j++; }
+      else if (x === "_" && us < 2) { us++; j++; }
+      else if (x === "." && !dot && !(isD(text[j + 1]) || text[j + 1] === "#" || text[j + 1] === "♯")) { dot = true; j++; }
+      else break;
+    }
+    const u = Math.min(2, us + depth), beats = (1 / Math.pow(2, u)) * (dot ? 1.5 : 1);
+    if (d === "0") { cur = { t: "rest", u, dot, beats }; items.push(cur); tieFrom = null; i = j; continue; }
+    if (low && high) { bad(text.slice(i, j)); i = j; continue; }
+    const name = (low ? "." : "") + d + (sharp ? "#" : "") + (high ? "*" : "");
+    const semi = SEMI[d] + (sharp ? 1 : 0) + (high ? 12 : 0) - (low ? 12 : 0);
+    if (tieFrom && tieFrom.semi === semi) {       // 连音线：合成一个长音
+      tieFrom.beats += beats; cur = tieFrom; tieFrom = null;
+      items.push({ t: "ext", owner: cur, u, tied: true, label: (sharp ? "♯" : "") + d, dot });
+    } else {
+      tieFrom = null;
+      cur = { t: "note", name, digit: d, low, high, sharp, semi, u, dot, beats }; items.push(cur);
+    }
+    i = j;
   }
   return items;
 }
@@ -248,14 +312,15 @@ function renderScore(sec, items) {
     let el;
     if (it.t === "bar") { el = mk("span", "bar"); }
     else if (it.t === "bad") { el = mk("span", "it bad"); el.appendChild(mk("b", "dg", it.tok)); }
+    else if (it.t === "tie") { el = mk("span", "it"); el.style.minWidth = "0"; el.append(mk("i", "dt", ""), mk("b", "dg", "⁀"), mk("i", "dt", ""), mk("em", "ly", "")); el.style.color = "#9ca3af"; }
     else if (it.t === "ext") {
-      el = mk("span", "it"); el.append(mk("i", "dt", ""), mk("b", "dg u" + it.u, "–"), mk("i", "dt", ""), mk("em", "ly", ""));
+      el = mk("span", "it"); el.append(mk("i", "dt", ""), mk("b", "dg u" + it.u, it.tied ? "(" + it.label + ")" + (it.dot ? "·" : "") : "–"), mk("i", "dt", ""), mk("em", "ly", ""));
       (it.owner.exts = it.owner.exts || []).push(el);
     } else {
       el = mk("span", "it" + (it.t === "rest" ? " rest" : ""));
       const lyric = it.t === "note" ? (ly[li++] || "") : "";
       el.append(mk("i", "dt", it.high ? "•" : ""),
-        mk("b", "dg u" + it.u, (it.sharp ? "♯" : "") + (it.t === "rest" ? "0" : it.digit)),
+        mk("b", "dg u" + it.u, (it.sharp ? "♯" : "") + (it.t === "rest" ? "0" : it.digit) + (it.dot ? "·" : "")),
         mk("i", "dt", it.low ? "•" : ""),
         mk("em", "ly", /^[_-]$/.test(lyric) ? "" : lyric));
     }
@@ -273,21 +338,20 @@ function hint() {
   else say("");
 }
 
-// ---------- 琴键 ----------
+// ---------- 琴键（按真实的音高，所以选了调，亮的键会跟着变）----------
 const keyEls = {};
 (function buildPiano() {
-  const box = $("piano"), W = 100 / 21;
-  for (let o = 0; o < 3; o++) for (let d = 1; d <= 7; d++) {
-    const name = (o === 0 ? "." : "") + d + (o === 2 ? "*" : ""), idx = o * 7 + d - 1;
-    const k = mk("div", "wk " + (o === 0 ? "lo" : o === 2 ? "hi" : ""), String(d));
-    k.style.left = idx * W + "%"; k.style.width = W + "%"; keyEls[name] = k; box.appendChild(k);
-    if ([1, 2, 4, 5, 6].includes(d)) {
-      const bn = (o === 0 ? "." : "") + d + "#" + (o === 2 ? "*" : "");
+  const box = $("piano"), W = 100 / 21, WH = [0, 2, 4, 5, 7, 9, 11], LET = ["C", "D", "E", "F", "G", "A", "B"];
+  for (let o = 0; o < 3; o++) for (let k = 0; k < 7; k++) {
+    const semi = (o - 1) * 12 + WH[k], idx = o * 7 + k;
+    const el = mk("div", "wk " + (o === 0 ? "lo" : o === 2 ? "hi" : ""), LET[k] + (k === 0 ? String(3 + o) : ""));
+    el.style.left = idx * W + "%"; el.style.width = W + "%"; keyEls[semi] = el; box.appendChild(el);
+    if ([0, 1, 3, 4, 5].includes(k)) {
       const b = mk("div", "bk"); b.style.width = W * 0.6 + "%"; b.style.left = (idx + 1) * W - W * 0.3 + "%";
-      keyEls[bn] = b; box.appendChild(b);
+      keyEls[semi + 1] = b; box.appendChild(b);
     }
   }
-  Object.entries(keyEls).forEach(([n, el]) => el.onclick = () => { ensureCtx(); beep(freqOf(n), ctx.currentTime, 0.4); });
+  Object.entries(keyEls).forEach(([semi, el]) => el.onclick = () => { ensureCtx(); beep(261.63 * Math.pow(2, +semi / 12), ctx.currentTime, 0.4); });
 })();
 
 // ---------- 声音 ----------
@@ -312,6 +376,7 @@ let playing = false, timers = [];
 function clearHL() {
   $("score").querySelectorAll(".on").forEach(e => e.classList.remove("on"));
   $("piano").querySelectorAll(".on").forEach(e => e.classList.remove("on"));
+  $("nowKey").textContent = "";
 }
 let shown = null;
 function showPart(part) {
@@ -323,7 +388,11 @@ function hl(it, part) {
   showPart(part);
   clearHL();
   it.el.classList.add("on"); (it.exts || []).forEach(e => e.classList.add("on"));
-  if (it.t === "note" && keyEls[it.name]) keyEls[it.name].classList.add("on");
+  if (it.t === "note") {
+    const abs = it.semi + transpose(), k = keyEls[abs];
+    if (k) k.classList.add("on");
+    $("nowKey").textContent = "现在按：" + noteLabel(abs) + (k ? "" : "（超出琴键，可以降调）");
+  } else $("nowKey").textContent = "（停）";
   const box = $("score"); box.scrollTop = it.el.offsetTop - box.clientHeight / 2;
 }
 function stop() {
@@ -348,7 +417,7 @@ function play(entries) {
     part.items.forEach(it => {
       if (it.t !== "note" && it.t !== "rest") return;
       const at = t;
-      if (it.t === "note") beep(it.freq, at, it.beats * spb * 0.93);
+      if (it.t === "note") beep(hz(it.semi), at, it.beats * spb * 0.93);
       timers.push(setTimeout(() => hl(it, part), delay(at)));
       t += it.beats * spb;
     });
@@ -419,7 +488,7 @@ $("secLyrics").oninput = e => { secOf(activeId).lyrics = e.target.value; persist
 $("songName").oninput = e => { song.name = e.target.value; persist(); };
 $("bpm").onchange = e => { song.bpm = Math.max(30, Math.min(300, parseInt(e.target.value) || 96)); e.target.value = song.bpm; persist(); };
 
-let padR = 0, padO = "mid", padSharp = false;
+let padR = 0, padO = "mid", padSharp = false, padDot = false;
 function groupBtns(attr, fn) {
   document.querySelectorAll(`[${attr}]`).forEach(b => { if (attr === "data-d" || attr === "data-tok") return; b.onclick = () => {
     document.querySelectorAll(`[${attr}]`).forEach(x => x.classList.remove("on")); b.classList.add("on"); fn(b.getAttribute(attr)); }; });
@@ -427,15 +496,16 @@ function groupBtns(attr, fn) {
 groupBtns("data-r", v => padR = +v);
 groupBtns("data-o", v => padO = v);
 $("sharpBtn").onclick = () => { padSharp = !padSharp; $("sharpBtn").classList.toggle("on", padSharp); };
+$("dotBtn").onclick = () => { padDot = !padDot; $("dotBtn").classList.toggle("on", padDot); };
 function insertTok(tok) {
   const s = secOf(activeId); s.text = (s.text.trim() + " " + tok).trim(); $("secText").value = s.text; persist(); showEditorScore();
   $("secText").scrollTop = 1e6;
 }
 document.querySelectorAll("[data-d]").forEach(b => b.onclick = () => {
-  const d = b.dataset.d, us = "_".repeat(padR);
+  const d = b.dataset.d, us = "_".repeat(padR) + (padDot ? "." : "");
   if (d === "0") { insertTok("0" + us); return; }
   const name = (padO === "low" ? "." : "") + d + (padSharp ? "#" : "") + (padO === "high" ? "*" : "");
-  ensureCtx(); beep(freqOf(name), ctx.currentTime, 0.3); insertTok(name + us);
+  ensureCtx(); beep(hz(SEMI[d] + (padSharp ? 1 : 0) + (padO === "high" ? 12 : padO === "low" ? -12 : 0)), ctx.currentTime, 0.3); insertTok(name + us);
 });
 document.querySelectorAll("[data-tok]").forEach(b => b.onclick = () => insertTok(b.dataset.tok));
 $("bkTok").onclick = () => {
@@ -447,7 +517,7 @@ $("bkTok").onclick = () => {
 const clone = o => JSON.parse(JSON.stringify(o));
 function loadSongs() { try { return JSON.parse(localStorage.getItem("gepu_songs")) || []; } catch (e) { return []; } }
 function storeSongs(a) { try { localStorage.setItem("gepu_songs", JSON.stringify(a)); return true; } catch (e) { return false; } }
-const sigOf = s => JSON.stringify([s.bpm, s.sections.map(x => [x.name, x.text, x.lyrics])]);
+const sigOf = s => JSON.stringify([s.bpm, s.key || 0, s.shift || 0, s.sections.map(x => [x.name, x.text, x.lyrics])]);
 function sanitize(x) {
   if (!x || typeof x.name !== "string" || !Array.isArray(x.sections) || !x.sections.length) return null;
   const used = new Set(), map = {};
@@ -460,7 +530,9 @@ function sanitize(x) {
   let order = Array.isArray(x.order) ? x.order.slice(0, 200).filter(o => o && map[o.sec]).map(o => ({ sec: map[o.sec], rep: Math.max(1, Math.min(9, parseInt(o.rep) || 1)), on: o.on !== false })) : [];
   if (!order.length) order = sections.map(s => ({ sec: s.id, rep: 1, on: true }));
   const bpm = x.bpm >= 30 && x.bpm <= 300 ? Math.round(x.bpm) : 96;
-  return { name: x.name.trim().slice(0, 30) || "没名字", bpm, sections, order };
+  const key = Number.isInteger(x.key) && x.key >= 0 && x.key <= 11 ? x.key : 0;
+  const shift = Number.isInteger(x.shift) && x.shift >= -12 && x.shift <= 12 ? x.shift : 0;
+  return { name: x.name.trim().slice(0, 30) || "没名字", bpm, key, shift, sections, order };
 }
 function merge(incoming) {
   const a = loadSongs(); let added = 0, same = 0, renamed = 0;
@@ -544,8 +616,19 @@ $("oldBtn").onclick = () => {
   if (r) say(`已从旧版搬来：新增 ${r.added} 首；已经有的 ${r.same} 首跳过；重名的 ${r.renamed} 首另存为“（导入）”。`, true);
 };
 
+$("bookBtn").onclick = () => {
+  if (typeof BOOK_SONGS === "undefined") { say("找不到 book-songs.js，请和这个页面放在同一个文件夹里。"); return; }
+  const r = merge(BOOK_SONGS);
+  if (r) say(`已载入：新增 ${r.added} 首；已经有的 ${r.same} 首跳过；重名但内容不同的 ${r.renamed} 首另存为“（导入）”。在下面“我的歌曲”里点“打开”。`, true);
+};
+
 // ---------- 新歌 / 示例 / 启动 ----------
-function renderAll() { $("songName").value = song.name; $("bpm").value = song.bpm; renderTabs(); renderOrder(); loadEditor(); }
+const shText = () => ((song.shift || 0) > 0 ? "+" : "") + (song.shift || 0);
+function renderKey() { $("keySel").value = String(song.key || 0); $("shVal").textContent = shText(); }
+$("keySel").onchange = e => { song.key = +e.target.value; persist(); };
+$("shUp").onclick = () => { song.shift = Math.min(12, (song.shift || 0) + 1); renderKey(); persist(); };
+$("shDn").onclick = () => { song.shift = Math.max(-12, (song.shift || 0) - 1); renderKey(); persist(); };
+function renderAll() { $("songName").value = song.name; $("bpm").value = song.bpm; renderKey(); renderTabs(); renderOrder(); loadEditor(); }
 $("newBtn").onclick = () => { if (confirm("开始一首新歌？现在这首如果没保存就会丢掉。")) { stop(); song = newSong(); activeId = song.sections[0].id; persist(); renderAll(); } };
 $("demoBtn").onclick = () => { stop(); song = demoSong(); activeId = song.sections[0].id; persist(); renderAll(); say("已载入示例，点“按顺序播放”听听看", true); };
 try { const c = JSON.parse(localStorage.getItem("gepu_current")); const s = c && sanitize(c); if (s) { song = s; song.name = typeof c.name === "string" ? c.name.slice(0, 30) : ""; activeId = song.sections[0].id; } else song = demoSong(), activeId = song.sections[0].id; } catch (e) { song = demoSong(); activeId = song.sections[0].id; }
