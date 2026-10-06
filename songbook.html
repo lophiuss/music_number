@@ -216,7 +216,7 @@
     <div class="row">
       <span class="label">照片</span><input type="file" id="olFile" accept="image/*">
       <span class="label" style="margin-left:8px">切成</span>
-      <select id="olStrips"><option value="auto" selected>自动按谱行切（推荐）</option><option value="1">整张一起读</option><option value="2">2 条</option><option value="3">3 条</option><option value="4">4 条</option><option value="5">5 条</option><option value="6">6 条</option></select>
+      <select id="olStrips"><option value="auto" selected>自动按谱行切（可能漏，会提示）</option><option value="manual">我自己在照片上画框（最准）</option><option value="1">整张一起读</option><option value="2">2 条</option><option value="3">3 条</option><option value="4">4 条</option><option value="5">5 条</option><option value="6">6 条</option></select>
       <span class="help">（一行一行读比整页准；最好先把照片裁成只剩谱子）</span>
     </div>
     <div class="row">
@@ -227,7 +227,7 @@
     </div>
     <div class="help" id="olSizeInfo" style="margin:-4px 0 8px"></div>
     <div id="olStripsBox" class="help" style="margin-bottom:6px"></div>
-    <canvas id="olPrev" style="max-width:100%;border:1px solid var(--line);border-radius:8px;display:none"></canvas>
+    <canvas id="olPrev" style="touch-action:none;cursor:crosshair;max-width:100%;border:1px solid var(--line);border-radius:8px;display:none"></canvas>
     <details style="margin:8px 0"><summary class="help" style="cursor:pointer">给 AI 的提示词（想改可以改）</summary><textarea id="olPrompt" rows="12"></textarea></details>
     <div class="row">
       <button id="olRun" class="primary" style="font-size:16px;padding:8px 18px">🔍 开始识别</button>
@@ -1046,30 +1046,55 @@ function olSlices(img, plan, maxW) {      // 按计划把图缩小、切开，�
 let olPlan = [];
 function olDrawPlan() {
   const cv = $("olPrev"), g = cv.getContext("2d"), k = cv.width / olImg.naturalWidth;
-  g.drawImage(olImg, 0, 0, cv.width, cv.height); g.lineWidth = 2; g.font = "bold 16px sans-serif";
+  g.drawImage(olImg, 0, 0, cv.width, cv.height);
+  g.fillStyle = "rgba(0,0,0,0.42)"; let yy = 0;      // 没被红框框住的地方变暗：变暗的地方不会被读
+  olPlan.filter(x => x.on).sort((a, b) => a.y0 - b.y0).forEach(x => { if (x.y0 * k > yy) g.fillRect(0, yy, cv.width, x.y0 * k - yy); yy = Math.max(yy, x.y1 * k); });
+  if (yy < cv.height) g.fillRect(0, yy, cv.width, cv.height - yy);
+  g.lineWidth = 2; g.font = "bold 16px sans-serif";
   olPlan.forEach((x, i) => { g.strokeStyle = x.on ? "#dc2626" : "#9ca3af"; g.fillStyle = g.strokeStyle; g.setLineDash(x.on ? [] : [6, 4]);
     g.strokeRect(2, x.y0 * k + 1, cv.width - 4, (x.y1 - x.y0) * k - 2); g.fillText(String(i + 1), 8, x.y0 * k + 18); });
+}
+function olRenderPlanList(note) {
+  const box = $("olStripsBox"); box.textContent = note + " ";
+  olPlan.sort((a, b) => a.y0 - b.y0);
+  olPlan.forEach((x, i) => {
+    const l = document.createElement("label"); l.style.cssText = "margin-right:10px;white-space:nowrap";
+    const c = document.createElement("input"); c.type = "checkbox"; c.checked = x.on; c.onchange = () => { x.on = c.checked; olDrawPlan(); };
+    const del = document.createElement("a"); del.textContent = "✕"; del.href = "#"; del.title = "删掉这个框"; del.style.cssText = "margin-left:3px;color:#dc2626;text-decoration:none";
+    del.onclick = ev => { ev.preventDefault(); olPlan.splice(i, 1); olRenderPlanList(note); };
+    l.append(c, ` 第${i + 1}条`, del); box.appendChild(l);
+  });
+  const clr = document.createElement("button"); clr.className = "small"; clr.textContent = "清空所有框"; clr.onclick = () => { olPlan = []; olRenderPlanList("在照片上拖出红框。"); };
+  box.appendChild(clr); olDrawPlan();
 }
 function olBuildPlan() {
   if (!olImg) return;
   const mode = $("olStrips").value; let segs = null, note = "";
-  if (mode === "auto") {
+  if (mode === "manual") { segs = []; note = "在下面的照片上，用鼠标或手指从上往下拖，拖出一个红框，把“一行谱（连同上面的和弦、下面的歌词）”框住；每一行拖一个。拖错了点 ✕ 删掉。"; }
+  else if (mode === "auto") {
     const o = olSystems(olImg, olInkCache);
     if (o.segs.length >= 2 && Math.max(...o.segs.map(x => x.ratio)) <= 9) {
-      segs = o.segs.map(x => ({ y0: x.y0, y1: x.y1, on: x.ratio >= 3.6 }));
-      note = `自动找到 ${segs.filter(x => x.on).length} 行谱。虚线灰框（标题、页眉之类）已经去掉，不对的话在下面勾一勾。`;
-    } else note = "这张图自动分不清哪是哪一行（行挨得太近），先均匀切成 3 条；可以改上面“切成”的条数，红框要正好框住一行谱。";
+      segs = o.segs.map(x => ({ y0: x.y0, y1: x.y1, on: x.ratio >= 2.8 }));
+      note = `自动找到 ${segs.filter(x => x.on).length} 个框。⚠️ 请对着照片检查：照片上变暗的地方不会被读。短的行（只有半行谱的）容易漏掉：漏了就在照片上自己从上往下拖一个框补上；框多了就取消勾选或点 ✕。`;
+    } else note = "这张图自动分不清哪是哪一行（行挨得太近），先均匀切成 3 条；可以改“切成”的条数，或选“自己画框”。红框要正好框住一行谱。";
   }
   if (!segs) {
     const n = mode === "auto" ? 3 : parseInt(mode), c = n > 1 ? olCutPoints(olImg, n).cuts : [0, olImg.naturalHeight]; segs = [];
     for (let i = 0; i < n; i++) segs.push({ y0: c[i], y1: c[i + 1], on: true });
   }
-  olPlan = segs; const box = $("olStripsBox"); box.textContent = note + " "; 
-  segs.forEach((x, i) => { const l = document.createElement("label"); l.style.cssText = "margin-right:10px;white-space:nowrap";
-    const c = document.createElement("input"); c.type = "checkbox"; c.checked = x.on; c.onchange = () => { x.on = c.checked; olDrawPlan(); };
-    l.append(c, ` 第${i + 1}条`); box.appendChild(l); });
-  olDrawPlan();
+  olPlan = segs; olRenderPlanList(note);
 }
+// 在照片上拖出红框
+(function () {
+  const cv = $("olPrev"); let y0 = null, yc = null;
+  const yOf = e => { const r = cv.getBoundingClientRect(); return Math.max(0, Math.min(cv.height, (e.clientY - r.top) * (cv.height / r.height))); };
+  cv.onpointerdown = e => { if (!olImg) return; y0 = yc = yOf(e); cv.setPointerCapture(e.pointerId); };
+  cv.onpointermove = e => { if (y0 === null) return; yc = yOf(e); olDrawPlan(); const g = cv.getContext("2d"); g.setLineDash([5, 4]); g.strokeStyle = "#2563eb"; g.lineWidth = 2; g.strokeRect(2, Math.min(y0, yc), cv.width - 4, Math.abs(yc - y0)); };
+  cv.onpointerup = e => {
+    if (y0 === null) return; const k = cv.width / olImg.naturalWidth, a = Math.min(y0, yc) / k, b = Math.max(y0, yc) / k; y0 = null;
+    if (Math.abs(b - a) * k >= 14) { olPlan.push({ y0: Math.round(a), y1: Math.round(b), on: true }); olRenderPlanList($("olStripsBox").firstChild.textContent.trim()); } else olDrawPlan();
+  };
+})();
 $("olStrips").onchange = olBuildPlan;
 $("olFile").onchange = e => {
   const f = e.target.files[0]; if (!f) return;
