@@ -50,6 +50,15 @@
   .chip.now { background: var(--accent); color: #fff; border-color: var(--accent); transform: scale(1.15); }
   .chip.now small { color: #e0e7ff; }
   .chip.done { opacity: .45; }
+  .chip { cursor: pointer; }
+  .chip.sel { outline: 3px solid #f59e0b; }
+  .editor { display: none; margin-top: 10px; padding: 10px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; }
+  select { font: inherit; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; }
+  input[type=number], input[type=text] { font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; width: 90px; }
+  input[type=text] { width: 180px; flex: 1; min-width: 120px; }
+  .song { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+  .song .nm { flex: 1; font-weight: 600; word-break: break-all; }
+  .song small { color: var(--muted); font-weight: 400; }
   #msg { min-height: 22px; font-size: 14px; color: var(--danger); margin-top: 8px; }
   #msg.ok { color: var(--ok); }
   input[type=range] { flex: 1; min-width: 120px; accent-color: var(--accent); }
@@ -76,6 +85,8 @@
       <button data-dur="0.5" class="on">中 ½</button>
       <button data-dur="1">长 1</button>
       <button data-dur="2">超长 2</button>
+      <span class="label" style="min-width:0">自己定：</span>
+      <input type="number" id="customDur" min="0.05" max="16" step="0.05" value="0.5"> 秒
     </div>
     <div class="piano" id="piano"></div>
     <div class="row">
@@ -89,6 +100,19 @@
     <h2>② 你的旋律</h2>
     <textarea id="inputNotes" rows="3" placeholder="例如：1:0.5 1:0.5 5:0.5 5:0.5 6:0.5 6:0.5 5:1"></textarea>
     <div id="chips" class="chips" style="margin-top:10px"></div>
+    <div class="help" style="margin-top:6px">💡 点一下上面的小方块，可以改它的长短或删掉它。</div>
+    <div id="editor" class="editor">
+      <div class="row" style="margin-bottom:0">
+        <b id="editName"></b>
+        <span>音</span>
+        <select id="editNote"><option value="0">停顿</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select>
+        <select id="editOct"><option value="low">低音</option><option value="mid">中音</option><option value="high">高音</option></select>
+        <label><input type="checkbox" id="editSharp"> 升半音♯</label>
+        <span>长短</span><input type="number" id="editDur" min="0.05" max="16" step="0.05"> 秒
+        <button id="editDel">删除这个音</button>
+        <button id="editClose">完成</button>
+      </div>
+    </div>
     <div id="msg"></div>
   </div>
 
@@ -113,6 +137,15 @@
       <button id="playBtn" class="primary">▶ 播放</button>
       <button id="stopBtn" class="stop" style="display:none">■ 停止</button>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>④ 我的歌曲（保存在这台电脑的浏览器里）</h2>
+    <div class="row">
+      <input type="text" id="songName" placeholder="给这首歌起个名字" maxlength="30">
+      <button id="saveBtn" class="primary" style="font-size:16px;padding:8px 18px">💾 保存</button>
+    </div>
+    <div id="songs"></div>
   </div>
 
   <div class="card">
@@ -151,14 +184,16 @@ let octave = "mid", duration = "0.5", wave = "triangle";
 // ---------- 解析文字 ----------
 function parse(text) {
   const items = []; let tempo = null;
-  for (const tok of text.trim().split(/\s+/).filter(Boolean)) {
+  const toks = text.trim().split(/\s+/).filter(Boolean);
+  for (let ti = 0; ti < toks.length; ti++) {
+    const tok = toks[ti];
     const t = /^tempo:(\d+(\.\d+)?)$/i.exec(tok);
     if (t) { tempo = parseFloat(t[1]); continue; }
     const [name, d] = tok.split(":");
     const dur = parseFloat(d);
     const rest = name === "0";
-    if ((!rest && freqOf(name) === null) || !(dur > 0)) { items.push({ tok, bad: true }); continue; }
-    items.push({ tok, name, dur, rest, freq: rest ? 0 : freqOf(name) });
+    if ((!rest && freqOf(name) === null) || !(dur > 0)) { items.push({ tok, ti, bad: true }); continue; }
+    items.push({ tok, ti, name, dur, rest, freq: rest ? 0 : freqOf(name) });
   }
   return { items, tempo };
 }
@@ -180,13 +215,93 @@ function render(activeIdx = -1) {
       else if (activeIdx >= 0 && ix < activeIdx) d.classList.add("done");
       ix++;
     }
+    if (it.ti === selTi) d.classList.add("sel");
+    d.onclick = () => selectChip(it);
     chipsBox.appendChild(d);
   });
+  if (selTi >= 0 && !items.some(i => i.ti === selTi && !i.bad)) closeEditor();
   if (!playing) {
     if (bad) say(`有 ${bad} 个写错了（红色的），播放时会跳过。格式应该像 1:0.5`);
     else say("");
   }
 }
+// ---------- 改某一个音的长短 ----------
+let selTi = -1;
+const editor = $("editor"), editDur = $("editDur");
+function tokens() { return input.value.trim().split(/\s+/).filter(Boolean); }
+function setTokens(a) { input.value = a.join(" "); try { localStorage.setItem("melody", input.value); } catch (e) {} }
+function selectChip(it) {
+  if (it.bad) { say("这个写错了。可以直接在上面的文字里改，或点“删掉最后一个”。"); return; }
+  selTi = it.ti; editDur.value = it.dur;
+  $("editName").textContent = it.rest ? "停顿" : (it.name.startsWith(".") ? "低" : it.name.endsWith("*") ? "高" : "") + PRETTY(it.name);
+  const m = /^(\.?)([1-7])(#?)(\*?)$/.exec(it.name);
+  $("editNote").value = it.rest ? "0" : m[2];
+  $("editOct").value = m && m[1] ? "low" : m && m[4] ? "high" : "mid";
+  $("editSharp").checked = !!(m && m[3]);
+  syncEditDisabled();
+  editor.style.display = "block";
+  if (!it.rest) { ensureCtx(); beep(it.freq, ctx.currentTime, 0.35); }
+  render();
+}
+function closeEditor() { selTi = -1; editor.style.display = "none"; render(); }
+editDur.oninput = () => {
+  const v = parseFloat(editDur.value);
+  if (!(v > 0) || selTi < 0) return;
+  const a = tokens(); a[selTi] = a[selTi].split(":")[0] + ":" + v; setTokens(a); render();
+};
+function syncEditDisabled() {
+  const rest = $("editNote").value === "0", n = $("editNote").value;
+  $("editOct").disabled = rest; $("editSharp").disabled = rest || n === "3" || n === "7"; // 3和7没有升半音
+  if ($("editSharp").disabled) $("editSharp").checked = false;
+}
+function editPitch() {
+  if (selTi < 0) return;
+  syncEditDisabled();
+  const n = $("editNote").value, a = tokens(), dur = a[selTi].split(":")[1];
+  const name = n === "0" ? "0" : ($("editOct").value === "low" ? "." : "") + n + ($("editSharp").checked ? "#" : "") + ($("editOct").value === "high" ? "*" : "");
+  a[selTi] = name + ":" + dur; setTokens(a);
+  if (n !== "0") { ensureCtx(); beep(freqOf(name), ctx.currentTime, 0.35); }
+  const it = parse(input.value).items.find(i => i.ti === selTi);
+  $("editName").textContent = it.rest ? "停顿" : (it.name.startsWith(".") ? "低" : it.name.endsWith("*") ? "高" : "") + PRETTY(it.name);
+  render();
+}
+["editNote", "editOct", "editSharp"].forEach(id => $(id).onchange = editPitch);
+$("editDel").onclick = () => { const a = tokens(); a.splice(selTi, 1); setTokens(a); closeEditor(); };
+$("editClose").onclick = closeEditor;
+
+// ---------- 保存歌曲 ----------
+function loadSongs() { try { return JSON.parse(localStorage.getItem("songs")) || []; } catch (e) { return []; } }
+function storeSongs(a) { try { localStorage.setItem("songs", JSON.stringify(a)); return true; } catch (e) { return false; } }
+function renderSongs() {
+  const box = $("songs"), list = loadSongs();
+  box.innerHTML = list.length ? "" : '<div class="help">还没有保存的歌。写好旋律后，起个名字点“保存”。</div>';
+  list.forEach((s, i) => {
+    const r = document.createElement("div"); r.className = "song";
+    const n = document.createElement("div"); n.className = "nm";
+    n.textContent = s.name + " ";
+    const sm = document.createElement("small"); sm.textContent = `${s.text.trim().split(/\s+/).length} 个音`; n.appendChild(sm);
+    const open = document.createElement("button"); open.textContent = "打开";
+    open.onclick = () => {
+      input.value = s.text; if (s.tempo) { $("tempo").value = s.tempo; $("tempo").oninput({ target: $("tempo") }); }
+      $("songName").value = s.name; closeEditor(); say(`已打开《${s.name}》，点“播放”听听看`, true);
+    };
+    const del = document.createElement("button"); del.textContent = "删除";
+    del.onclick = () => { if (confirm(`确定删除《${s.name}》吗？删了就找不回来了。`)) { const a = loadSongs(); a.splice(i, 1); storeSongs(a); renderSongs(); } };
+    r.append(n, open, del); box.appendChild(r);
+  });
+}
+$("saveBtn").onclick = () => {
+  const name = $("songName").value.trim(), text = input.value.trim();
+  if (!text) { say("旋律是空的，先写几个音再保存。"); return; }
+  if (!name) { say("先给这首歌起个名字。"); $("songName").focus(); return; }
+  const a = loadSongs(), k = a.findIndex(s => s.name === name);
+  if (k >= 0 && !confirm(`已经有一首叫《${name}》的歌了，要用现在的替换它吗？`)) return;
+  const rec = { name, text, tempo: parseFloat($("tempo").value) };
+  if (k >= 0) a[k] = rec; else a.push(rec);
+  if (!storeSongs(a)) { say("这个浏览器不让保存（可能是隐私模式）。"); return; }
+  renderSongs(); say(`《${name}》已保存 ✓`, true);
+};
+
 function say(t, ok) { msg.textContent = t; msg.className = ok ? "ok" : ""; }
 
 // ---------- 追加内容 ----------
@@ -231,7 +346,13 @@ function group(attr, setter) {
   });
 }
 group("data-oct", v => octave = v);
-group("data-dur", v => duration = v);
+group("data-dur", v => { duration = v; $("customDur").value = v; });
+$("customDur").oninput = e => {
+  const v = parseFloat(e.target.value);
+  if (!(v > 0)) return;
+  duration = String(v);
+  document.querySelectorAll("[data-dur]").forEach(x => x.classList.toggle("on", x.dataset.dur === duration));
+};
 group("data-wave", v => wave = v);
 $("restBtn").onclick = () => append(`0:${duration}`);
 $("backBtn").onclick = () => {
@@ -242,7 +363,7 @@ $("clearBtn").onclick = () => {
   if (!input.value.trim() || confirm("确定要清空全部旋律吗？")) { input.value = ""; render(); }
 };
 document.querySelectorAll("[data-demo]").forEach(b => b.onclick = () => {
-  input.value = b.dataset.demo; render(); say("已填入，点“播放”听听看", true);
+  input.value = b.dataset.demo; closeEditor(); say("已填入，点“播放”听听看", true);
 });
 $("tempo").oninput = e => $("tempoVal").textContent = parseFloat(e.target.value).toFixed(1) + "×";
 input.addEventListener("input", () => { render(); try { localStorage.setItem("melody", input.value); } catch (e) {} });
@@ -304,7 +425,7 @@ $("playBtn").onclick = () => {
 
 // ---------- 启动：恢复上次的旋律 ----------
 try { const s = localStorage.getItem("melody"); if (s) input.value = s; } catch (e) {}
-render();
+render(); renderSongs();
 </script>
 </body>
 </html>
