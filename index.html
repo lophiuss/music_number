@@ -1,103 +1,310 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Music Player</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>简谱音乐播放器</title>
+<style>
+  :root {
+    --bg: #f4f6fb; --card: #ffffff; --text: #1f2937; --muted: #6b7280;
+    --accent: #4f46e5; --accent2: #eef2ff; --danger: #dc2626; --ok: #16a34a; --line: #e5e7eb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 24px; margin: 8px 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
+  .card { background: var(--card); border-radius: 14px; padding: 16px; margin-bottom: 14px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  .card h2 { font-size: 16px; margin: 0 0 10px; }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: #fff;
+    border-radius: 10px; padding: 8px 14px; color: var(--text); }
+  button:hover { background: var(--accent2); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-size: 18px; padding: 10px 28px; }
+  button.primary:hover { background: #4338ca; }
+  button.stop { background: var(--danger); color: #fff; border-color: var(--danger); font-size: 18px; padding: 10px 28px; }
+  button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .label { color: var(--muted); font-size: 14px; min-width: 56px; }
+
+  /* 琴键 */
+  .piano { position: relative; height: 150px; display: flex; user-select: none; touch-action: manipulation; margin: 8px 0; }
+  .white { flex: 1; border: 1px solid #9ca3af; border-radius: 0 0 8px 8px; background: #fff;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 8px; text-align: center;
+    font-weight: 600; color: var(--muted); padding-top: 0; }
+  .white:hover, .white.active { background: #c7d2fe; }
+  .black { position: absolute; top: 0; width: 8.6%; height: 90px; background: #1f2937; color: #fff;
+    border-radius: 0 0 6px 6px; border: none; padding: 0; font-size: 12px;
+    display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px; z-index: 2; }
+  .black:hover, .black.active { background: var(--accent); }
+
+  textarea { width: 100%; font: 16px/1.5 ui-monospace, Menlo, Consolas, monospace; padding: 10px;
+    border: 1px solid var(--line); border-radius: 10px; resize: vertical; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 40px; }
+  .chip { padding: 6px 10px; border-radius: 8px; background: var(--accent2); border: 1px solid #c7d2fe;
+    font-size: 14px; line-height: 1.2; text-align: center; }
+  .chip small { display: block; color: var(--muted); font-size: 11px; }
+  .chip.rest { background: #f3f4f6; border-color: var(--line); color: var(--muted); }
+  .chip.bad { background: #fee2e2; border-color: #fca5a5; color: var(--danger); }
+  .chip.now { background: var(--accent); color: #fff; border-color: var(--accent); transform: scale(1.15); }
+  .chip.now small { color: #e0e7ff; }
+  .chip.done { opacity: .45; }
+  #msg { min-height: 22px; font-size: 14px; color: var(--danger); margin-top: 8px; }
+  #msg.ok { color: var(--ok); }
+  input[type=range] { flex: 1; min-width: 120px; accent-color: var(--accent); }
+  .help { font-size: 13px; color: var(--muted); line-height: 1.7; }
+  .help code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
+</style>
 </head>
 <body>
-    <h1>Music Player</h1>
-    <p>Enter notes, durations, and tempo (e.g., "1:0.5 1:0.25 2:0.25 1:0.5 5:0.5 Tempo:2.0"):</p>
-    <textarea id="inputNotes" rows="3" cols="50"></textarea>
-    <button onclick="playMusic()">Play</button>
-    <script>
-        const noteFreqs = {
-    "1": 261.63,  // C
-    ".1": 130.81, // Lower C
-    "1*": 523.25, // Higher C
-    "2": 293.66,  // D
-    ".2": 146.83, // Lower D
-    "2*": 587.33, // Higher D
-    "3": 329.63,  // E
-    ".3": 164.81, // Lower E
-    "3*": 659.26, // Higher E
-    "4": 349.23,  // F
-    ".4": 174.61, // Lower F
-    "4*": 698.46, // Higher F
-    "5": 392.00,  // G
-    ".5": 196.00, // Lower G
-    "5*": 783.99, // Higher G
-    "6": 440.00,  // A
-    ".6": 220.00, // Lower A
-    "6*": 880.00, // Higher A
-    "7": 493.88,  // B
-    ".7": 246.94, // Lower B
-    "7*": 987.77,  // Higher B
-"1#": 277.18,  // C sharp (or D flat)
-"2#": 311.13,  // D sharp (or E flat)
-"4#": 369.99,  // F sharp (or G flat)
-"5#": 415.30,  // G sharp (or A flat)
-"6#": 466.16  // A sharp (or B flat)
+<div class="wrap">
+  <h1>🎵 简谱音乐播放器</h1>
+  <p class="sub">点琴键就能写旋律，也可以直接打字。点“播放”听结果。</p>
 
-            // Add the rest of the note frequencies here...
-        };
+  <div class="card">
+    <h2>① 点琴键输入</h2>
+    <div class="row">
+      <span class="label">音高</span>
+      <button data-oct="low">低音</button>
+      <button data-oct="mid" class="on">中音</button>
+      <button data-oct="high">高音</button>
+    </div>
+    <div class="row">
+      <span class="label">长短</span>
+      <button data-dur="0.25">短 ¼</button>
+      <button data-dur="0.5" class="on">中 ½</button>
+      <button data-dur="1">长 1</button>
+      <button data-dur="2">超长 2</button>
+    </div>
+    <div class="piano" id="piano"></div>
+    <div class="row">
+      <button id="restBtn">⏸ 加停顿</button>
+      <button id="backBtn">⌫ 删掉最后一个</button>
+      <button id="clearBtn">🗑 全部清空</button>
+    </div>
+  </div>
 
-        function playNote(noteRepresentation, duration = 0.5, tempo = 1.0) {
-            const sampleRate = 44100;
-            const t = new Float32Array(Math.ceil(sampleRate * duration * tempo));
-            const noteFreq = noteFreqs[noteRepresentation] || 0;
+  <div class="card">
+    <h2>② 你的旋律</h2>
+    <textarea id="inputNotes" rows="3" placeholder="例如：1:0.5 1:0.5 5:0.5 5:0.5 6:0.5 6:0.5 5:1"></textarea>
+    <div id="chips" class="chips" style="margin-top:10px"></div>
+    <div id="msg"></div>
+  </div>
 
-            if (noteFreq === 0) return;
+  <div class="card">
+    <h2>③ 播放</h2>
+    <div class="row">
+      <span class="label">速度</span>
+      <input type="range" id="tempo" min="0.5" max="3" step="0.1" value="1">
+      <span id="tempoVal">1.0×</span>
+    </div>
+    <div class="row">
+      <span class="label">音量</span>
+      <input type="range" id="vol" min="0" max="1" step="0.05" value="0.6">
+    </div>
+    <div class="row">
+      <span class="label">音色</span>
+      <button data-wave="triangle" class="on">柔和</button>
+      <button data-wave="sine">纯净</button>
+      <button data-wave="square">电子</button>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button id="playBtn" class="primary">▶ 播放</button>
+      <button id="stopBtn" class="stop" style="display:none">■ 停止</button>
+    </div>
+  </div>
 
-            for (let i = 0; i < t.length; i++) {
-                t[i] = Math.sin(2 * Math.PI * noteFreq * i / sampleRate);
-            }
+  <div class="card">
+    <h2>试听例子（点一下自动填入）</h2>
+    <div class="row">
+      <button data-demo="1:0.5 1:0.5 5:0.5 5:0.5 6:0.5 6:0.5 5:1 4:0.5 4:0.5 3:0.5 3:0.5 2:0.5 2:0.5 1:1">小星星</button>
+      <button data-demo="5:0.5 5:0.5 6:1 5:1 1*:1 7:2 5:0.5 5:0.5 6:1 5:1 2*:1 1*:2">生日快乐</button>
+      <button data-demo="3:0.5 2:0.5 1:0.5 2:0.5 3:0.5 3:0.5 3:1 2:0.5 2:0.5 2:1 3:0.5 5:0.5 5:1">玛丽有只小羊羔</button>
+    </div>
+  </div>
 
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            const audioBuffer = audioContext.createBuffer(1, t.length, sampleRate);
-            audioBuffer.getChannelData(0).set(t);
+  <div class="card help">
+    <h2>写法说明</h2>
+    每个音写成 <code>音:秒数</code>，用空格隔开。<br>
+    <code>1</code>~<code>7</code> = do re mi fa sol la si；前面加点 <code>.1</code> 是低音；后面加星 <code>1*</code> 是高音；加井号 <code>1#</code> 是升半音。<br>
+    <code>0:0.5</code> = 停顿半秒。<br>
+    想在文字里指定速度可以写 <code>Tempo:2</code>（数字越大越快）；写了就以它为准。
+  </div>
+</div>
 
-            const source = audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(audioContext.destination);
-            source.start();
+<script>
+// ---------- 音高计算 ----------
+const SEMI = { 1: 0, 2: 2, 3: 4, 4: 5, 5: 7, 6: 9, 7: 11 };
+function freqOf(name) {
+  const m = /^(\.?)([1-7])(#?)(\*?)$/.exec(name);
+  if (!m) return null;
+  let s = SEMI[m[2]] + (m[3] ? 1 : 0) - (m[1] ? 12 : 0) + (m[4] ? 12 : 0);
+  return 261.63 * Math.pow(2, s / 12);
+}
 
-            return new Promise((resolve) => {
-                source.onended = () => {
-                    audioContext.close();
-                    resolve();
-                };
-            });
-        }
+// ---------- 页面元素 ----------
+const $ = id => document.getElementById(id);
+const input = $("inputNotes"), chipsBox = $("chips"), msg = $("msg");
+let octave = "mid", duration = "0.5", wave = "triangle";
 
-        function playMusic() {
-            const inputNotes = document.getElementById("inputNotes").value;
-            const noteDurationPairs = inputNotes.split(/\s+/); // Split by one or more whitespace characters
-            let tempo = 1.0;
+// ---------- 解析文字 ----------
+function parse(text) {
+  const items = []; let tempo = null;
+  for (const tok of text.trim().split(/\s+/).filter(Boolean)) {
+    const t = /^tempo:(\d+(\.\d+)?)$/i.exec(tok);
+    if (t) { tempo = parseFloat(t[1]); continue; }
+    const [name, d] = tok.split(":");
+    const dur = parseFloat(d);
+    const rest = name === "0";
+    if ((!rest && freqOf(name) === null) || !(dur > 0)) { items.push({ tok, bad: true }); continue; }
+    items.push({ tok, name, dur, rest, freq: rest ? 0 : freqOf(name) });
+  }
+  return { items, tempo };
+}
 
-            // Check if tempo is specified in the input
-            if (inputNotes.includes("Tempo:")) {
-                const tempoMatch = inputNotes.match(/Tempo:(\d+(\.\d+)?)/);
-                if (tempoMatch) {
-                    tempo = parseFloat(tempoMatch[1]);
-                }
-            }
+const PRETTY = n => n === "0" ? "停" : n.replace(/^\./, "").replace("*", "").replace("#", "♯") ;
+function render(activeIdx = -1) {
+  const { items } = parse(input.value);
+  chipsBox.innerHTML = "";
+  let bad = 0, ix = 0;
+  items.forEach(it => {
+    const d = document.createElement("div");
+    d.className = "chip";
+    if (it.bad) { d.classList.add("bad"); d.textContent = it.tok; bad++; }
+    else {
+      if (it.rest) d.classList.add("rest");
+      const mark = it.name.startsWith(".") ? "低" : it.name.endsWith("*") ? "高" : "";
+      d.innerHTML = `${mark}${PRETTY(it.name)}<small>${it.dur}秒</small>`;
+      if (ix === activeIdx) d.classList.add("now");
+      else if (activeIdx >= 0 && ix < activeIdx) d.classList.add("done");
+      ix++;
+    }
+    chipsBox.appendChild(d);
+  });
+  if (!playing) {
+    if (bad) say(`有 ${bad} 个写错了（红色的），播放时会跳过。格式应该像 1:0.5`);
+    else say("");
+  }
+}
+function say(t, ok) { msg.textContent = t; msg.className = ok ? "ok" : ""; }
 
-            async function playNextNote() {
-                if (noteDurationPairs.length === 0) return;
+// ---------- 追加内容 ----------
+function append(tok) {
+  input.value = (input.value.trim() + " " + tok).trim();
+  render();
+}
+function noteName(base) {
+  const [n, sharp] = [base[0], base.slice(1)];
+  return (octave === "low" ? "." : "") + n + sharp + (octave === "high" ? "*" : "");
+}
 
-                const pair = noteDurationPairs.shift();
-                const [noteRepresentation, durationStr] = pair.split(":");
-                const duration = parseFloat(durationStr);
+// ---------- 琴键 ----------
+const WHITES = ["1","2","3","4","5","6","7"], LABEL = ["do","re","mi","fa","sol","la","si"];
+const BLACKS = { "1#": 1, "2#": 2, "4#": 4, "5#": 5, "6#": 6 }; // 位于第几个白键右边
+const piano = $("piano");
+WHITES.forEach((n, i) => {
+  const b = document.createElement("div");
+  b.className = "white"; b.innerHTML = `${n}<br>${LABEL[i]}`;
+  b.onclick = () => keyPress(n, b);
+  piano.appendChild(b);
+});
+Object.entries(BLACKS).forEach(([n, pos]) => {
+  const b = document.createElement("button");
+  b.className = "black"; b.textContent = n.replace("#", "♯");
+  b.style.left = `calc(${pos * (100 / 7)}% - 4.3%)`;
+  b.onclick = () => keyPress(n, b);
+  piano.appendChild(b);
+});
+function keyPress(base, el) {
+  const name = noteName(base);
+  ensureCtx(); beep(freqOf(name), ctx.currentTime, 0.35);
+  el.classList.add("active"); setTimeout(() => el.classList.remove("active"), 150);
+  append(`${name}:${duration}`);
+}
 
-                await playNote(noteRepresentation, duration, tempo);
+// ---------- 选项按钮 ----------
+function group(attr, setter) {
+  document.querySelectorAll(`[${attr}]`).forEach(b => b.onclick = () => {
+    document.querySelectorAll(`[${attr}]`).forEach(x => x.classList.remove("on"));
+    b.classList.add("on"); setter(b.getAttribute(attr));
+  });
+}
+group("data-oct", v => octave = v);
+group("data-dur", v => duration = v);
+group("data-wave", v => wave = v);
+$("restBtn").onclick = () => append(`0:${duration}`);
+$("backBtn").onclick = () => {
+  const parts = input.value.trim().split(/\s+/); parts.pop();
+  input.value = parts.join(" "); render();
+};
+$("clearBtn").onclick = () => {
+  if (!input.value.trim() || confirm("确定要清空全部旋律吗？")) { input.value = ""; render(); }
+};
+document.querySelectorAll("[data-demo]").forEach(b => b.onclick = () => {
+  input.value = b.dataset.demo; render(); say("已填入，点“播放”听听看", true);
+});
+$("tempo").oninput = e => $("tempoVal").textContent = parseFloat(e.target.value).toFixed(1) + "×";
+input.addEventListener("input", () => { render(); try { localStorage.setItem("melody", input.value); } catch (e) {} });
 
-                // Play the next note after a brief delay (e.g., 100ms)
-                setTimeout(playNextNote, 100);
-            }
+// ---------- 声音 ----------
+let ctx, master;
+function ensureCtx() {
+  if (!ctx) {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    master = ctx.createGain(); master.connect(ctx.destination);
+  }
+  if (ctx.state === "suspended") ctx.resume();
+  master.gain.value = parseFloat($("vol").value);
+}
+$("vol").oninput = () => { if (master) master.gain.value = parseFloat($("vol").value); };
+const live = [];
+function beep(freq, start, dur) {
+  const osc = ctx.createOscillator(), g = ctx.createGain();
+  osc.type = wave; osc.frequency.value = freq;
+  const a = 0.02, r = Math.min(0.08, dur / 3);   // 渐入渐出，避免“啪”的杂音
+  g.gain.setValueAtTime(0, start);
+  g.gain.linearRampToValueAtTime(0.8, start + a);
+  g.gain.setValueAtTime(0.8, start + dur - r);
+  g.gain.linearRampToValueAtTime(0, start + dur);
+  osc.connect(g); g.connect(master);
+  osc.start(start); osc.stop(start + dur + 0.02);
+  live.push(osc);
+}
 
-            playNextNote();
-        }
-    </script>
+// ---------- 播放 / 停止 ----------
+let playing = false, timers = [];
+function stop() {
+  playing = false;
+  timers.forEach(clearTimeout); timers = [];
+  live.forEach(o => { try { o.stop(); } catch (e) {} }); live.length = 0;
+  $("playBtn").style.display = ""; $("stopBtn").style.display = "none";
+  render();
+}
+$("stopBtn").onclick = stop;
+$("playBtn").onclick = () => {
+  const { items, tempo: textTempo } = parse(input.value);
+  const good = items.filter(i => !i.bad);
+  if (!good.length) { say("还没有可以播放的音。点上面的琴键，或点下面的例子试试。"); return; }
+  ensureCtx();
+  const tempo = textTempo || parseFloat($("tempo").value);
+  playing = true;
+  $("playBtn").style.display = "none"; $("stopBtn").style.display = "";
+  say(`正在播放…（速度 ${tempo.toFixed(1)}×）`, true);
+  let t = ctx.currentTime + 0.1, idx = 0;
+  good.forEach((it, i) => {
+    const d = it.dur / tempo;
+    if (!it.rest) beep(it.freq, t, d * 0.95);
+    const delay = (t - ctx.currentTime) * 1000;
+    timers.push(setTimeout(() => render(i), delay));
+    t += d;
+  });
+  timers.push(setTimeout(() => { stop(); say("播放完了 ✓", true); }, (t - ctx.currentTime) * 1000 + 100));
+};
+
+// ---------- 启动：恢复上次的旋律 ----------
+try { const s = localStorage.getItem("melody"); if (s) input.value = s; } catch (e) {}
+render();
+</script>
 </body>
 </html>

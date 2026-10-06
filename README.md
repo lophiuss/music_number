@@ -1,51 +1,46 @@
-Music Player
-This is a simple web-based music player that allows you to input musical notes, their durations, and tempo and hear the resulting melody. You can experiment with different note sequences and tempos to create your own tunes.
+# 🎵 简谱音乐播放器
 
-How to Use
-Clone or download this repository to your local machine.
+一个打开浏览器就能用的小工具：点琴键或输入数字，就能写出一段旋律并播放出来。
 
-Open the index.html file in your web browser.
+## 怎么用
 
-You will see a text area where you can input your musical notes, durations, and tempo. The format for input is as follows:
+1. 用浏览器打开 `index.html`（双击即可，不需要安装任何东西）。
+2. 在页面上写旋律，有两种方式，可以混着用：
+   - **点琴键：** 先选"低音／中音／高音"和音的长短，再点琴键。黑键是升半音。
+   - **直接打字：** 在"你的旋律"框里输入，格式见下面。
+3. 点 **▶ 播放**。想中途停下，点 **■ 停止**。
 
-java
-Copy code
-Enter notes, durations, and tempo (e.g., "1:0.5 1:0.25 2:0.25 1:0.5 5:0.5 Tempo:2.0"):
-Notes are represented by numbers from 1 to 7, with optional modifiers (e.g., ".1" for lower octave, "1*" for higher octave).
-Durations are specified in seconds (e.g., "0.5" for half a second).
-Tempo can be adjusted by including "Tempo:" followed by a positive number (e.g., "Tempo:2.0" for double tempo).
-After entering your musical sequence, click the "Play" button.
+页面上还有：
+- **加停顿**、**删掉最后一个**、**全部清空** 三个按钮；
+- **速度、音量** 滑块，和 **柔和／纯净／电子** 三种音色；
+- **试听例子**：《小星星》《生日快乐》《玛丽有只小羊羔》，点一下自动填入；
+- 播放时，当前播到的音会亮起来；写错的音显示成红色并有提示；
+- 你写的旋律会自动保存在浏览器里，关掉再打开还在。
 
-The music player will play each note in sequence according to the specified duration and tempo.
+## 打字的写法
 
-Supported Notes
-The following notes are supported along with their frequencies:
+每个音写成 `音:秒数`，用空格隔开。例如：
 
-"1": 261.63 Hz (C)
-".1": 130.81 Hz (Lower C)
-"1*": 523.25 Hz (Higher C)
-"2": 293.66 Hz (D)
-".2": 146.83 Hz (Lower D)
-"2*": 587.33 Hz (Higher D)
-"3": 329.63 Hz (E)
-".3": 164.81 Hz (Lower E)
-"3*": 659.26 Hz (Higher E)
-"4": 349.23 Hz (F)
-".4": 174.61 Hz (Lower F)
-"4*": 698.46 Hz (Higher F)
-"5": 392.00 Hz (G)
-".5": 196.00 Hz (Lower G)
-"5*": 783.99 Hz (Higher G)
-"6": 440.00 Hz (A)
-".6": 220.00 Hz (Lower A)
-"6*": 880.00 Hz (Higher A)
-"7": 493.88 Hz (B)
-".7": 246.94 Hz (Lower B)
-"7*": 987.77 Hz (Higher B)
-You can add more note frequencies to the noteFreqs object in the JavaScript code if needed.
+```
+1:0.5 1:0.5 5:0.5 5:0.5 6:0.5 6:0.5 5:1
+```
 
-Technical Details
-This music player is implemented in JavaScript and uses the Web Audio API to generate and play the musical notes. It calculates the waveform for each note, creates an audio buffer, and schedules the playback of each note with the specified duration and tempo.
+| 写法 | 意思 |
+| --- | --- |
+| `1` ~ `7` | do re mi fa sol la si（中音） |
+| `.1` | 前面加点：低音 |
+| `1*` | 后面加星：高音 |
+| `1#` | 后面加井号：升半音（`1#`、`2#`、`4#`、`5#`、`6#` 都可以） |
+| `0:0.5` | 停顿半秒 |
+| `Tempo:2` | 速度 2 倍，数字越大越快。写了它就以它为准，不看滑块 |
 
-Credits
-This project was created as a simple demonstration of web-based music generation and playback. It can be extended and customized for more advanced musical compositions.
+秒数越大，这个音越长。
+
+## 文件说明
+
+- `index.html`：整个程序都在这一个文件里。
+- `README.md`：就是你正在看的这份说明。
+
+## 技术说明
+
+用浏览器自带的声音功能（Web Audio）直接生成声音，不需要联网，也不需要安装任何东西。
