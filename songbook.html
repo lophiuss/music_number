@@ -219,11 +219,17 @@
       <select id="olStrips"><option value="1">整张一起读</option><option value="2">2 条</option><option value="3" selected>3 条</option><option value="4">4 条</option><option value="5">5 条</option><option value="6">6 条</option></select>
       <span class="help">（一行一行读比整页准；最好先把照片裁成只剩谱子）</span>
     </div>
+    <div class="row">
+      <span class="label">图片大小</span>
+      <select id="olSize"><option value="1000">小（最快）</option><option value="1400" selected>中</option><option value="1800">大（慢，但小符号更清楚）</option></select>
+      <label><input type="checkbox" id="olNoThink" checked> 关闭模型的“思考”（更快）</label>
+    </div>
     <canvas id="olPrev" style="max-width:100%;border:1px solid var(--line);border-radius:8px;display:none"></canvas>
     <details style="margin:8px 0"><summary class="help" style="cursor:pointer">给 AI 的提示词（想改可以改）</summary><textarea id="olPrompt" rows="12"></textarea></details>
     <div class="row">
       <button id="olRun" class="primary" style="font-size:16px;padding:8px 18px">🔍 开始识别</button>
-      <button id="olStop" style="display:none">■ 中止</button>
+      <button id="olSkip" style="display:none">⏭ 跳过这个模型</button>
+      <button id="olStop" style="display:none">■ 全部中止</button>
       <span id="olMsg" class="help"></span>
     </div>
     <div id="olOut"></div>
@@ -933,8 +939,8 @@ $("olConnect").onclick = async () => {
     box.innerHTML = "连不上 Ollama。请检查：① Ollama 有没有在运行；② 地址对不对；③ 如果是用网址（http://…）打开本页的，需要让 Ollama 允许这个来源——Mac：终端输入 <code>launchctl setenv OLLAMA_ORIGINS \"*\"</code> 然后退出并重开 Ollama；Windows：在“编辑系统环境变量”里新建用户变量 <code>OLLAMA_ORIGINS</code>，值填 <code>*</code>，然后重开 Ollama。直接双击打开本页文件通常不用设。";
   }
 };
-function olPrepareImage(img, strips) {      // 缩小并切成几条，返回 base64 数组
-  const W = Math.min(1800, img.naturalWidth), scale = W / img.naturalWidth, H = Math.round(img.naturalHeight * scale), out = [];
+function olPrepareImage(img, strips, maxW) {      // 缩小并切成几条，返回 base64 数组
+  const W = Math.min(maxW, img.naturalWidth), scale = W / img.naturalWidth, H = Math.round(img.naturalHeight * scale), out = [];
   for (let i = 0; i < strips; i++) {
     const y0 = Math.floor(H * i / strips), y1 = Math.floor(H * (i + 1) / strips), cv = document.createElement("canvas");
     cv.width = W; cv.height = y1 - y0; cv.getContext("2d").drawImage(img, 0, y0 / scale, img.naturalWidth, (y1 - y0) / scale, 0, 0, W, y1 - y0);
@@ -949,38 +955,69 @@ $("olFile").onchange = e => {
     cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height); cv.style.display = "block";
   }; img.src = URL.createObjectURL(f);
 };
-$("olStop").onclick = () => { if (olAbort) olAbort.abort(); };
+let olCtl = null, olStopAll = false;
+$("olStop").onclick = () => { olStopAll = true; if (olCtl) olCtl.abort(); };
+$("olSkip").onclick = () => { if (olCtl) olCtl.abort(); };
+// 一边收一边显示（stream），这样能看到它有没有在干活
+async function olChat(host, model, prompt, img, onTick) {
+  const attempts = $("olNoThink").checked ? [true, false] : [false];   // 模型不支持“关闭思考”这个参数时，去掉它重试
+  for (const noThink of attempts) {
+    const body = { model, stream: true, options: { temperature: 0.1 }, messages: [{ role: "user", content: prompt, images: [img] }] };
+    if (noThink) body.think = false;
+    const r = await fetch(host + "/api/chat", { method: "POST", signal: olCtl.signal, body: JSON.stringify(body) });
+    if (!r.ok) { const t = await r.text(); if (noThink && /think/i.test(t)) continue; throw new Error("HTTP " + r.status + " " + t.slice(0, 120)); }
+    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "", content = "", thinking = 0;
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true }); let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1); if (!line) continue;
+        const j = JSON.parse(line); if (j.error) throw new Error(j.error);
+        const m = j.message || {}; if (m.content) content += m.content; if (m.thinking) thinking += m.thinking.length;
+        onTick(content, thinking);
+      }
+    }
+    return content;
+  }
+  throw new Error("这个模型不接受请求");
+}
 $("olRun").onclick = async () => {
   const host = $("olHost").value.trim().replace(/\/$/, ""), models = [...$("olModels").querySelectorAll("input:checked")].map(x => x.value);
   if (!olImg) { olMsg("先选一张歌谱的照片。"); return; }
   if (!models.length) { olMsg("先点“连接”，再勾选至少一个能看图的模型。"); return; }
-  const strips = parseInt($("olStrips").value), imgs = olPrepareImage(olImg, strips), prompt = $("olPrompt").value;
-  olAbort = new AbortController(); $("olRun").style.display = "none"; $("olStop").style.display = ""; $("olOut").innerHTML = "";
-  try {
-    for (const model of models) {
-      const card = document.createElement("div"); card.className = "song"; card.style.display = "block"; $("olOut").appendChild(card);
-      card.append(mk("div", "nm", "🤖 " + model)); const status = mk("div", "help", "识别中…"); card.appendChild(status);
-      let sc = [], ly = [], t0 = Date.now();
+  const strips = parseInt($("olStrips").value), imgs = olPrepareImage(olImg, strips, parseInt($("olSize").value)), prompt = $("olPrompt").value;
+  olStopAll = false; $("olRun").style.display = "none"; $("olStop").style.display = ""; $("olSkip").style.display = ""; $("olOut").innerHTML = "";
+  for (const model of models) {
+    if (olStopAll) break;
+    const card = document.createElement("div"); card.className = "song"; card.style.display = "block"; $("olOut").appendChild(card);
+    card.append(mk("div", "nm", "🤖 " + model)); const status = mk("div", "help", "准备中…"), live = mk("pre"); live.style.cssText = "white-space:pre-wrap;font-size:12px;color:#6b7280;max-height:70px;overflow:auto;margin:4px 0";
+    card.append(status, live);
+    let sc = [], ly = [], t0 = Date.now(), skipped = false, failed = null;
+    for (let i = 0; i < imgs.length && !skipped && !failed; i++) {
+      olCtl = new AbortController(); let len = 0, th = 0, t1 = Date.now();
+      const label = `第 ${i + 1}/${imgs.length} 条`, tick = setInterval(() => {
+        status.textContent = `${label}：已等 ${Math.round((Date.now() - t1) / 1000)} 秒（这个模型一共 ${Math.round((Date.now() - t0) / 1000)} 秒）` + (th && !len ? "　模型在“思考”，还没开始写…" : len ? `　已写 ${len} 字` : "　还没有回应（可能在读图，大模型会很慢）");
+      }, 500);
+      olMsg(`${model}：${label}…　太慢的话点“跳过这个模型”`);
       try {
-        for (let i = 0; i < imgs.length; i++) {
-          olMsg(`${model}：第 ${i + 1}/${imgs.length} 条…（本机模型可能要等一两分钟）`);
-          const r = await fetch(host + "/api/chat", { method: "POST", signal: olAbort.signal, body: JSON.stringify({ model, stream: false, options: { temperature: 0.1 },
-            messages: [{ role: "user", content: prompt, images: [imgs[i]] }] }) });
-          if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 120));
-          const o = olSplit(((await r.json()).message || {}).content || ""); if (o.sc) sc.push(o.sc); if (o.ly) ly.push(o.ly);
-        }
-      } catch (e) { status.textContent = e.name === "AbortError" ? "已中止。" : "出错了：" + e.message; if (e.name === "AbortError") throw e; continue; }
-      const ta = mk("textarea"); ta.rows = 4; ta.value = sc.join(" | "); const tl = mk("textarea"); tl.rows = 2; tl.value = ly.join(" ");
-      const stat = mk("div", "help"), upd = () => { const q = olScore(ta.value); stat.textContent = `读出 ${q.notes} 个音，${q.bars} 个小节里有 ${q.good} 个拍数正好是 ${song.meter || 4} 拍，${q.bad} 处看不懂。（小节拍数对得越多，通常越准）`; };
-      ta.oninput = upd; upd(); status.textContent = `用时 ${Math.round((Date.now() - t0) / 1000)} 秒。检查下面的内容，需要的话直接改：`;
-      const row = mk("div", "row"), b1 = mk("button", "", "放进当前这一段"), b2 = mk("button", "", "放进一个新段落");
-      b1.onclick = () => { const sec = secOf(activeId); sec.text = (sec.text.trim() + " " + ta.value).trim(); sec.lyrics = (sec.lyrics.trim() + " " + tl.value).trim(); persist(); loadEditor(); say(`已放进“${sec.name}”，点“只播”听听看。`, true); };
-      b2.onclick = () => { const id = uid(); song.sections.push({ id, name: "识谱·" + model.split(":")[0], text: ta.value.trim(), lyrics: tl.value.trim() }); song.order.push({ sec: id, rep: 1, on: false }); activeId = id; persist(); renderAll(); say("已放进新段落（先不加入播放顺序，勾上才会播）。", true); };
-      row.append(b1, b2); card.append(mk("div", "help", "谱："), ta, mk("div", "help", "歌词："), tl, stat, row);
+        const text = await olChat(host, model, prompt, imgs[i], (c, t) => { len = c.length; th = t; live.textContent = c.slice(-300); });
+        const o = olSplit(text); if (o.sc) sc.push(o.sc); if (o.ly) ly.push(o.ly);
+      } catch (e) { if (e.name === "AbortError") { if (olStopAll) { failed = "已中止"; } else skipped = true; } else failed = "出错了：" + e.message; }
+      clearInterval(tick);
     }
-    olMsg("全部识别完了。");
-  } catch (e) { olMsg("已中止。"); }
-  $("olRun").style.display = ""; $("olStop").style.display = "none"; olAbort = null;
+    live.remove();
+    if (failed || skipped) { status.textContent = (failed || "已跳过") + `（用了 ${Math.round((Date.now() - t0) / 1000)} 秒）` + (sc.length ? "。已读出的部分在下面：" : ""); if (!sc.length) continue; }
+    else status.textContent = `用时 ${Math.round((Date.now() - t0) / 1000)} 秒。检查下面的内容，需要的话直接改：`;
+    const ta = mk("textarea"); ta.rows = 4; ta.value = sc.join(" | "); const tl = mk("textarea"); tl.rows = 2; tl.value = ly.join(" ");
+    const stat = mk("div", "help"), upd = () => { const q = olScore(ta.value); stat.textContent = `读出 ${q.notes} 个音，${q.bars} 个小节里有 ${q.good} 个拍数正好是 ${song.meter || 4} 拍，${q.bad} 处看不懂。（小节拍数对得越多，通常越准）`; };
+    ta.oninput = upd; upd();
+    const row = mk("div", "row"), b1 = mk("button", "", "放进当前这一段"), b2 = mk("button", "", "放进一个新段落");
+    b1.onclick = () => { const sec = secOf(activeId); sec.text = (sec.text.trim() + " " + ta.value).trim(); sec.lyrics = (sec.lyrics.trim() + " " + tl.value).trim(); persist(); loadEditor(); say(`已放进“${sec.name}”，点“只播”听听看。`, true); };
+    b2.onclick = () => { const id = uid(); song.sections.push({ id, name: "识谱·" + model.split(":")[0], text: ta.value.trim(), lyrics: tl.value.trim() }); song.order.push({ sec: id, rep: 1, on: false }); activeId = id; persist(); renderAll(); say("已放进新段落（先不加入播放顺序，勾上才会播）。", true); };
+    row.append(b1, b2); card.append(mk("div", "help", "谱："), ta, mk("div", "help", "歌词："), tl, stat, row);
+  }
+  olMsg(olStopAll ? "已中止。" : "全部识别完了。");
+  $("olRun").style.display = ""; $("olStop").style.display = "none"; $("olSkip").style.display = "none"; olCtl = null;
 };
 
 // ---------- 新歌 / 示例 / 启动 ----------
