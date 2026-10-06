@@ -221,9 +221,11 @@
     </div>
     <div class="row">
       <span class="label">图片大小</span>
-      <select id="olSize"><option value="1000">小（最快）</option><option value="1400" selected>中</option><option value="1800">大（慢，但小符号更清楚）</option></select>
+      <select id="olSize"><option value="auto" selected>自动（推荐）</option><option value="1000">小（最快）</option><option value="1400">中</option><option value="1800">大（慢，但小符号更清楚）</option></select>
+      <span class="help">自动：数字至少</span><input type="number" id="olMinDigit" value="22" min="12" max="60" style="width:64px"><span class="help">像素高</span>
       <label><input type="checkbox" id="olNoThink" checked> 关闭模型的“思考”（更快）</label>
     </div>
+    <div class="help" id="olSizeInfo" style="margin:-4px 0 8px"></div>
     <canvas id="olPrev" style="max-width:100%;border:1px solid var(--line);border-radius:8px;display:none"></canvas>
     <details style="margin:8px 0"><summary class="help" style="cursor:pointer">给 AI 的提示词（想改可以改）</summary><textarea id="olPrompt" rows="12"></textarea></details>
     <div class="row">
@@ -939,6 +941,38 @@ $("olConnect").onclick = async () => {
     box.innerHTML = "连不上 Ollama。请检查：① Ollama 有没有在运行；② 地址对不对；③ 如果是用网址（http://…）打开本页的，需要让 Ollama 允许这个来源——Mac：终端输入 <code>launchctl setenv OLLAMA_ORIGINS \"*\"</code> 然后退出并重开 Ollama；Windows：在“编辑系统环境变量”里新建用户变量 <code>OLLAMA_ORIGINS</code>，值填 <code>*</code>，然后重开 Ollama。直接双击打开本页文件通常不用设。";
   }
 };
+// 自动大小：先量一下谱子里数字大概多高，再缩到“刚好够清楚”（太小模型会瞎猜，太大又慢）
+function olMeasureDigit(img) {
+  const W = Math.min(1600, img.naturalWidth), k = W / img.naturalWidth, H = Math.round(img.naturalHeight * k);
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H; const g = cv.getContext("2d", { willReadFrequently: true }); g.drawImage(img, 0, 0, W, H);
+  const px = g.getImageData(0, 0, W, H).data, gray = new Float32Array(W * H), ii = new Float64Array((W + 1) * (H + 1));
+  for (let i = 0; i < W * H; i++) gray[i] = 0.3 * px[i * 4] + 0.59 * px[i * 4 + 1] + 0.11 * px[i * 4 + 2];
+  for (let y = 0; y < H; y++) { let row = 0; for (let x = 0; x < W; x++) { row += gray[y * W + x]; ii[(y + 1) * (W + 1) + x + 1] = ii[y * (W + 1) + x + 1] + row; } }
+  const R = 12, prof = new Int32Array(H);      // 和周围比明显更黑的点 = 墨水（不怕阴影）
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const x0 = Math.max(0, x - R), x1 = Math.min(W, x + R + 1), y0 = Math.max(0, y - R), y1 = Math.min(H, y + R + 1);
+    const m = (ii[y1 * (W + 1) + x1] - ii[y0 * (W + 1) + x1] - ii[y1 * (W + 1) + x0] + ii[y0 * (W + 1) + x0]) / ((x1 - x0) * (y1 - y0));
+    if (gray[y * W + x] < m - 28) prof[y]++;
+  }
+  const thr = Math.max(6, 0.02 * W), bands = []; let start = -1, gap = 0;
+  for (let y = 0; y <= H; y++) {
+    const on = y < H && prof[y] > thr;
+    if (on) { if (start < 0) start = y; gap = 0; } else if (start >= 0) { gap++; if (gap > 3 || y === H) { bands.push(y - gap - start + 1); start = -1; gap = 0; } }
+  }
+  const hs = bands.filter(h => h >= 8 && h <= 90).sort((a, b) => a - b);
+  if (hs.length < 3) return null;
+  return (hs[Math.floor(hs.length / 2)] * 0.8) / k;     // 数字高度（按原图像素算）
+}
+function olChooseWidth(img) {
+  const mode = $("olSize").value, nat = img.naturalWidth, info = $("olSizeInfo");
+  if (mode !== "auto") { info.textContent = ""; return Math.min(parseInt(mode), nat); }
+  const minD = Math.max(12, parseInt($("olMinDigit").value) || 22), d = olMeasureDigit(img);
+  if (!d || d < 6 || d > 300) { info.textContent = "没能量出数字大小，先用中等大小（宽 1400）。"; return Math.min(1400, nat); }
+  let w = Math.round((nat * minD) / d / 50) * 50; w = Math.max(900, Math.min(1800, nat, w));
+  const real = d * w / nat;
+  info.textContent = `自动大小：原图里数字约 ${Math.round(d)} 像素高 → 缩到宽 ${w}，数字约 ${Math.round(real)} 像素高` + (real < minD - 1 ? "（照片本身偏小或离得远，数字有点小，可能读不准；建议拍近一点或裁掉多余的边）" : "，够看清了。");
+  return w;
+}
 function olPrepareImage(img, strips, maxW) {      // 缩小并切成几条，返回 base64 数组
   const W = Math.min(maxW, img.naturalWidth), scale = W / img.naturalWidth, H = Math.round(img.naturalHeight * scale), out = [];
   for (let i = 0; i < strips; i++) {
@@ -985,7 +1019,7 @@ $("olRun").onclick = async () => {
   const host = $("olHost").value.trim().replace(/\/$/, ""), models = [...$("olModels").querySelectorAll("input:checked")].map(x => x.value);
   if (!olImg) { olMsg("先选一张歌谱的照片。"); return; }
   if (!models.length) { olMsg("先点“连接”，再勾选至少一个能看图的模型。"); return; }
-  const strips = parseInt($("olStrips").value), imgs = olPrepareImage(olImg, strips, parseInt($("olSize").value)), prompt = $("olPrompt").value;
+  const strips = parseInt($("olStrips").value), imgs = olPrepareImage(olImg, strips, olChooseWidth(olImg)), prompt = $("olPrompt").value;
   olStopAll = false; $("olRun").style.display = "none"; $("olStop").style.display = ""; $("olSkip").style.display = ""; $("olOut").innerHTML = "";
   for (const model of models) {
     if (olStopAll) break;
